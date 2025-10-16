@@ -36,6 +36,7 @@ from vllm.config import (
     update_config,
 )
 from vllm.distributed.ec_transfer import get_ec_transfer, has_ec_transfer
+from vllm.distributed.afd_transfer import AFDConnectorFactory
 from vllm.distributed.eplb.eplb_state import EplbState
 from vllm.distributed.kv_transfer import get_kv_transfer_group, has_kv_transfer_group
 from vllm.distributed.kv_transfer.kv_connector.utils import copy_kv_blocks
@@ -43,11 +44,14 @@ from vllm.distributed.parallel_state import (
     get_dcp_group,
     get_pp_group,
     get_tp_group,
+    get_world_group,
     graph_capture,
     is_global_first_rank,
     prepare_communication_buffer_for_model,
 )
 from vllm.forward_context import BatchDescriptor, set_forward_context
+from vllm.forward_context import (AFDMetadata, BatchDescriptor, DPMetadata,
+                                  set_forward_context)
 from vllm.logger import init_logger
 from vllm.model_executor.layers.attention_layer_base import AttentionLayerBase
 from vllm.model_executor.layers.rotary_embedding import MRotaryEmbedding
@@ -146,8 +150,11 @@ from vllm.v1.worker.ubatch_utils import (
     UBatchSlice,
     UBatchSlices,
     check_ubatch_thresholds,
+    create_ubatch_slices,
+    create_ubatch_multi_slices
 )
 from vllm.v1.worker.utils import is_residual_scattered_for_sp
+from vllm.platforms import current_platform
 
 from .utils import (
     AttentionGroup,
@@ -503,6 +510,16 @@ class GPUModelRunner(
         # means this layer will perform attention using the keys and values
         # from the KV cache of `shared_kv_cache_layers[layer_name]`.
         self.shared_kv_cache_layers: dict[str, str] = {}
+
+        # init AFD config
+        self.afd_config = vllm_config.afd_config
+        if self.afd_config and self.afd_config.afd_role == "attention":
+            self.afd_connector = AFDConnectorFactory.create_connector(
+                get_world_group().rank,
+                get_world_group().local_rank, vllm_config)
+            self.afd_connector.init_afd_connector()
+            self.num_stages = self.afd_config.num_afd_stages
+
         self.kv_sharing_fast_prefill_eligible_layers: set[str] = set()
 
         self.kv_sharing_fast_prefill_logits_indices = None
@@ -1068,6 +1085,7 @@ class GPUModelRunner(
         SpecDecodeMetadata | None,
         UBatchSlices | None,
         torch.Tensor | None,
+        AFDMetadata | None
     ]:
         """
         :return: tuple[
@@ -1079,7 +1097,7 @@ class GPUModelRunner(
         assert total_num_scheduled_tokens > 0
         num_reqs = self.input_batch.num_reqs
         assert num_reqs > 0
-
+        logger.info(f"nums_reqs: {num_reqs}")
         # OPTIMIZATION: Start copying the block table first.
         # This way, we can overlap the copy with the following CPU operations.
         self.input_batch.block_table.commit_block_table(num_reqs)
@@ -1184,6 +1202,9 @@ class GPUModelRunner(
 
         num_tokens_unpadded = scheduler_output.total_num_scheduled_tokens
         num_tokens_padded = self._get_num_input_tokens(num_tokens_unpadded)
+        logger.info("******************")
+        logger.info(f"num_tokens_unpadded: {num_tokens_unpadded}, num_tokens_padded: {num_tokens_padded}, input_batch.num_reqs: {self.input_batch.num_reqs}")
+
         uniform_decode = (
             max_num_scheduled_tokens == self.uniform_decode_query_len
         ) and (total_num_scheduled_tokens == num_reqs * max_num_scheduled_tokens)
@@ -1192,7 +1213,8 @@ class GPUModelRunner(
         # running prefills. This lets us set enforce_eager on the prefiller in
         # a P/D setup and still use CUDA graphs (enabled by this padding) on the
         # decoder.
-        allow_dp_padding = self.compilation_config.cudagraph_mode != CUDAGraphMode.NONE
+        allow_dp_padding = self.compilation_config.cudagraph_mode != CUDAGraphMode.NONE or \
+                            self.afd_config is not None
 
         ubatch_slices, num_tokens_across_dp = coordinate_batch_across_dp(
             num_tokens_unpadded=num_tokens_unpadded,
@@ -1203,7 +1225,8 @@ class GPUModelRunner(
             uniform_decode=uniform_decode,
             num_scheduled_tokens_per_request=num_scheduled_tokens,
         )
-
+        logger.info(f"jcz _prepare_inputs ubatch_slices:{ubatch_slices} num_tokens_across_dp:{num_tokens_across_dp}")
+        
         self.seq_lens.np[:num_reqs] = (
             self.input_batch.num_computed_tokens_cpu[:num_reqs] + num_scheduled_tokens
         )
@@ -1291,11 +1314,37 @@ class GPUModelRunner(
                 self.input_batch, num_scheduled_tokens, num_sampled_tokens
             )
 
+        if self.afd_config:
+            # For prefill, compute tokens per stage based on actual token
+            # counts
+            afd_tokens_start_loc = [0]
+            afd_tokens_lens = []
+            if ubatch_slices and len(ubatch_slices) > 1:
+                afd_tokens_start_loc = [ub.token_slice.start for ub in ubatch_slices]
+                afd_reqs_start_loc = [ub.request_slice.start for ub in ubatch_slices]
+                logger.info(f"afd_tokens_start_loc: {afd_tokens_start_loc} "
+                            f"afd_reqs_start_loc: {afd_reqs_start_loc}")
+                afd_tokens_lens = [ub.num_tokens for ub in ubatch_slices]
+            else:
+                afd_tokens_start_loc = [0]
+                afd_reqs_start_loc = [0]
+                afd_tokens_lens = [num_tokens_unpadded]
+            afd_metadata = AFDMetadata(
+                afd_tokens_start_loc=afd_tokens_start_loc,
+                afd_reqs_start_loc=afd_reqs_start_loc,
+                afd_stage_idx=0,
+                afd_connector=self.afd_connector,
+                afd_tokens_lens=afd_tokens_lens,
+            )
+        else:
+            afd_metadata = None
+
         return (
             logits_indices,
             spec_decode_metadata,
             ubatch_slices,
             num_tokens_across_dp,
+            afd_metadata,
         )
 
     def _build_attention_metadata(
@@ -2123,6 +2172,55 @@ class GPUModelRunner(
             padded_second_ubatch_slice, padded_second_ubatch_slice
         )
 
+    def get_afd_padding(
+            self, afd_tokens_start_loc: list[int],
+            afd_tokens_lens: list[int]) -> tuple[int, list[int], list[int]]:
+
+        afd_tokens_start_loc = list(afd_tokens_start_loc)
+        afd_tokens_lens = list(afd_tokens_lens)
+        original_max_end_loc = afd_tokens_start_loc[-1]
+
+        # 1. Stage count padding: pad to reach required num_stages by adding
+        # dummy stages.
+        if len(afd_tokens_start_loc) - 1 < self.num_stages:
+            missing = self.num_stages - (len(afd_tokens_start_loc) - 1)
+            for _ in range(missing):
+                afd_tokens_lens.append(0)
+
+        # 2. Stage-wise DP padding: pad each stage to max tokens across DP
+        # ranks.
+        if self.vllm_config.parallel_config.data_parallel_size > 1:
+            dp_size = self.vllm_config.parallel_config.data_parallel_size
+            dp_rank = self.vllm_config.parallel_config.data_parallel_rank
+            _, max_tokens_cpu = DPMetadata.num_stage_tokens_across_dp(
+                afd_tokens_lens, dp_size, dp_rank)
+            afd_tokens_lens = max_tokens_cpu.tolist()
+
+        # 3. If using CUDA graphs on attention server, pad each stage length
+        # up to the next configured cudagraph capture size so that each stage
+        # matches a captured graph size.
+        if (self.compilation_config.cudagraph_mode != CUDAGraphMode.NONE
+                and self.afd_config and self.afd_config.is_attention_server):
+
+            def pad_to_capture_size(n: int) -> int:
+                for s in self.cudagraph_batch_sizes:
+                    if n <= s // self.num_stages:
+                        return s // self.num_stages
+                return n
+
+            afd_tokens_lens = [pad_to_capture_size(n) for n in afd_tokens_lens]
+
+        # Recompute start locations from lengths to ensure consistency after
+        # padding.
+        new_start_loc = [afd_tokens_start_loc[0]]
+        running = afd_tokens_start_loc[0]
+        for length in afd_tokens_lens:
+            running += length
+            new_start_loc.append(running)
+
+        num_pad = new_start_loc[-1] - original_max_end_loc
+        return num_pad, new_start_loc, afd_tokens_lens
+
     def _pool(
         self,
         hidden_states: torch.Tensor,
@@ -2558,6 +2656,7 @@ class GPUModelRunner(
                     spec_decode_metadata,
                     ubatch_slices,
                     num_tokens_across_dp,
+                    afd_metadata,
                 ) = self._prepare_inputs(
                     scheduler_output, num_scheduled_tokens_np, max_num_scheduled_tokens
                 )
@@ -2602,6 +2701,9 @@ class GPUModelRunner(
                     scheduler_output.total_num_scheduled_tokens
                 )
 
+            logger.info(f"jcz execute_model ubatch_slices:{ubatch_slices}")
+            logger.info(f"jcz execute_model num_tokens_across_dp:{num_tokens_across_dp}")
+            logger.info(f"jcz execute_model afd_metadata:{afd_metadata}")
             (
                 input_ids,
                 inputs_embeds,
@@ -2636,6 +2738,18 @@ class GPUModelRunner(
             # Mark KV scales as calculated after the first forward pass
             self.calculate_kv_scales = False
 
+            uniform_decode = (max_query_len
+                              == self.uniform_decode_query_len) and (
+                                  num_scheduled_tokens
+                                  == self.input_batch.num_reqs * max_query_len)
+            batch_descriptor = BatchDescriptor(num_tokens=num_input_tokens,
+                                               uniform_decode=uniform_decode)
+            if self.afd_config:
+                cudagraph_runtime_mode = CUDAGraphMode.NONE
+            else:
+                cudagraph_runtime_mode, batch_descriptor = \
+                    self.cudagraph_dispatcher.dispatch(batch_descriptor)
+
         # Run the model.
         # Use persistent buffers for CUDA graphs.
         with (
@@ -2647,10 +2761,14 @@ class GPUModelRunner(
                 cudagraph_runtime_mode=cudagraph_runtime_mode,
                 batch_descriptor=batch_descriptor,
                 ubatch_slices=ubatch_slices,
+                afd_metadata=afd_metadata
             ),
             record_function_or_nullcontext("gpu_model_runner: forward"),
             self.maybe_get_kv_connector_output(scheduler_output) as kv_connector_output,
         ):
+            logger.info(f"input_ids: {input_ids.shape}")
+            if inputs_embeds:
+                logger.info(f"inputs_embeds: {inputs_embeds.shape}")
             model_output = self._model_forward(
                 input_ids=input_ids,
                 positions=positions,
@@ -3452,6 +3570,50 @@ class GPUModelRunner(
             or cudagraph_runtime_mode.valid_runtime_modes()
         )
 
+        # AFD padding (stage-level alignment) before DP padding
+        if self.vllm_config.afd_config:
+            if num_tokens > self.vllm_config.afd_config.num_afd_stages:
+                num_tokens_per_stage = (
+                    num_tokens // self.vllm_config.afd_config.num_afd_stages)
+                max_num_reqs = self.scheduler_config.max_num_seqs
+                num_reqs = min(num_tokens, max_num_reqs)
+                num_reqs_per_stage = (
+                    num_reqs // self.vllm_config.afd_config.num_afd_stages)
+                afd_tokens_start_loc = [
+                    i * num_tokens_per_stage
+                    for i in range(self.vllm_config.afd_config.num_afd_stages +
+                                   1)
+                ]
+                afd_reqs_start_loc = [
+                    i * num_reqs_per_stage
+                    for i in range(self.vllm_config.afd_config.num_afd_stages +
+                                   1)
+                ]
+                afd_tokens_lens = [
+                    num_tokens_per_stage
+                    for _ in range(self.vllm_config.afd_config.num_afd_stages)
+                ]
+                afd_tokens_lens[-1] += num_tokens % num_tokens_per_stage
+                afd_tokens_start_loc[-1] = num_tokens
+                afd_tokens_start_loc = afd_tokens_start_loc[:-1]
+                afd_metadata = AFDMetadata(
+                    afd_tokens_start_loc=afd_tokens_start_loc,
+                    afd_reqs_start_loc=afd_reqs_start_loc,
+                    afd_stage_idx=0,
+                    afd_connector=self.afd_connector,
+                    afd_tokens_lens=afd_tokens_lens,
+                )
+            else:
+                afd_metadata = AFDMetadata(
+                    afd_tokens_start_loc=list(range(num_tokens + 1)),
+                    afd_reqs_start_loc=list(range(num_tokens + 1)),
+                    afd_stage_idx=0,
+                    afd_connector=self.afd_connector,
+                    afd_tokens_lens=[1] * num_tokens,
+                )
+        else:
+            afd_metadata = None
+
         # If cudagraph_mode.decode_mode() == FULL and
         # cudagraph_mode.separate_routine(). This means that we are using
         # different graphs and/or modes for mixed prefill-decode batches vs.
@@ -3502,8 +3664,9 @@ class GPUModelRunner(
         total_num_scheduled_tokens = int(num_scheduled_tokens.sum())
         num_sampled_tokens = np.ones(num_reqs, dtype=np.int32)
 
-        # Disable DP padding when running eager
-        allow_dp_padding = self.compilation_config.cudagraph_mode != CUDAGraphMode.NONE
+        # Disable DP padding when running eager.
+        allow_dp_padding = self.compilation_config.cudagraph_mode != CUDAGraphMode.NONE or \
+                            self.afd_config is not None
 
         # We currently only microbatch if the number of tokens is
         # over a certain threshold.
@@ -3516,6 +3679,7 @@ class GPUModelRunner(
             uniform_decode=uniform_decode,
             num_scheduled_tokens_per_request=num_scheduled_tokens,
         )
+        logger.info(f"jcz _dummy_run ubatch_slices:{ubatch_slices} num_tokens_across_dp:{num_tokens_across_dp}")
         num_tokens_after_padding = num_tokens
         if num_tokens_across_dp is not None:
             dp_rank = self.parallel_config.data_parallel_rank
@@ -3638,6 +3802,7 @@ class GPUModelRunner(
                     cudagraph_runtime_mode=cudagraph_runtime_mode,
                     batch_descriptor=batch_descriptor,
                     ubatch_slices=ubatch_slices,
+                    afd_metadata=afd_metadata
                 ),
             ):
                 outputs = self.model(
@@ -4162,7 +4327,6 @@ class GPUModelRunner(
                     kv_cache_spec,
                     kv_cache_group_id,
                 )
-
                 attn_groups.append(attn_group)
             return attn_groups
 
@@ -4194,8 +4358,8 @@ class GPUModelRunner(
                     if kv_cache_group_id < len(kernel_block_sizes)
                     else None,
                     num_metadata_builders=1
-                    if not self.parallel_config.enable_dbo
-                    else 2,
+                    if not self.parallel_config.enable_dbo and not self.afd_config
+                    else self.afd_config.num_afd_stages, # TODO: handle afd num stages
                 )
         # Calculate reorder batch threshold (if needed)
         # Note (tdoublep): do this *after* constructing builders,
@@ -4793,6 +4957,11 @@ class GPUModelRunner(
                     f"{layer.impl.__class__.__name__} "
                     "does not return the softmax lse for decode."
                 )
+
+    def initialize_afd_connector(self) -> None:
+        """Initialize AFD connector if available."""
+        if hasattr(self, 'afd_connector') and self.afd_connector:
+            self.afd_connector.init_afd_connector()
 
     def may_add_encoder_only_layers_to_kv_cache_config(self) -> None:
         """

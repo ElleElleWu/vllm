@@ -76,6 +76,29 @@ from vllm.config.multimodal import MMCacheType, MMEncoderTPMode
 from vllm.config.observability import DetailedTraceModules
 from vllm.config.parallel import DistributedExecutorBackend, ExpertPlacementStrategy
 from vllm.config.scheduler import SchedulerPolicy
+from vllm.config import (
+    AFDConfig,
+    CacheConfig,
+    CompilationConfig,
+    ConfigType,
+    DeviceConfig,
+    EPLBConfig,
+    KVEventsConfig,
+    KVTransferConfig,
+    LoadConfig,
+    LoRAConfig,
+    ModelConfig,
+    MultiModalConfig,
+    ObservabilityConfig,
+    ParallelConfig,
+    PoolerConfig,
+    SchedulerConfig,
+    SpeculativeConfig,
+    StructuredOutputsConfig,
+    VllmConfig,
+    get_attr_docs,
+)
+from vllm.config.multimodal import MMCacheType, MultiModalConfig
 from vllm.config.utils import get_field
 from vllm.logger import init_logger
 from vllm.platforms import CpuArchEnum, current_platform
@@ -564,6 +587,8 @@ class EngineArgs:
     kv_offloading_backend: KVOffloadingBackend | None = (
         CacheConfig.kv_offloading_backend
     )
+    # AFD config
+    afd_config: AFDConfig | None = None
 
     def __post_init__(self):
         # support `EngineArgs(compilation_config={...})`
@@ -1120,6 +1145,7 @@ class EngineArgs:
         vllm_group.add_argument(
             "--structured-outputs-config", **vllm_kwargs["structured_outputs_config"]
         )
+        vllm_group.add_argument("--afd-config", **vllm_kwargs["afd_config"])
 
         # Other arguments
         parser.add_argument(
@@ -1684,6 +1710,7 @@ class EngineArgs:
             kv_events_config=self.kv_events_config,
             ec_transfer_config=self.ec_transfer_config,
             additional_config=self.additional_config,
+            afd_config=self.afd_config,
         )
 
         return config
