@@ -6,8 +6,23 @@ FFN workers."""
 import time
 from dataclasses import dataclass
 from typing import Any, Optional
+import typing
 
 import torch
+
+class FFNNeedForwardData:
+
+    def __init__(self,
+                 moe_comm_method: typing.Any,
+                 num_input_tokens: int,
+                 with_prefill: bool,
+                 total_num_scheduled_tokens: Optional[int],
+                 is_dummy_run:bool = False):
+        self.moe_comm_method = moe_comm_method
+        self.num_input_tokens = num_input_tokens
+        self.with_prefill = with_prefill
+        self.total_num_scheduled_tokens = total_num_scheduled_tokens
+        self.is_dummy_run = is_dummy_run
 
 
 @dataclass
@@ -27,12 +42,13 @@ class AFDConnectorMetadata:
     shared_expert_num: Optional[int] = None # number of share experts
     scale: Optional[torch.Tensor] = None #  quant scale
     expertTokenNumsOut: Optional[torch.Tensor] = None # The number of tokens received by each expert is used as input for the subsequent GMM.
-    send_handle_list: Optional[list[Any]] = None # the communication handles (list of Work objects returned by torch.distributed.isend)
     recv_handle_list: Optional[list[Any]] = None # the communication handles (list of Work objects returned by torch.distributed.irecv)
 
     # Optional fields for debugging and extensibility
     request_id: Optional[str] = None
     timestamp: Optional[float] = None
+    """ffn need forward data"""
+    ffn_need_forward_data: Optional[FFNNeedForwardData] = None
 
     def __post_init__(self):
         """Validate data consistency."""
@@ -69,7 +85,8 @@ class AFDConnectorMetadata:
             seq_len: int,
             dtype: torch.dtype,
             device: torch.device,
-            request_id: Optional[str] = None) -> "AFDConnectorMetadata":
+            request_id: Optional[str] = None,
+            ffn_need_forward_data:Optional[FFNNeedForwardData] = None) -> "AFDConnectorMetadata":
         """Create metadata for attention side (single sequence)."""
         return cls(layer_idx=layer_idx,
                    stage_idx=stage_idx,
@@ -77,6 +94,7 @@ class AFDConnectorMetadata:
                    dtype=dtype,
                    device=device,
                    request_id=request_id,
+                   ffn_need_forward_data=ffn_need_forward_data,
                    timestamp=time.time())
 
     @classmethod

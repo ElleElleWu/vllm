@@ -56,7 +56,7 @@ from vllm.distributed import (get_ep_group, get_pp_group,
                               get_tensor_model_parallel_world_size,
                               tensor_model_parallel_all_gather)
 from vllm.distributed.afd_transfer.afd_connector.metadata import (
-    AFDConnectorMetadata)
+    AFDConnectorMetadata, FFNNeedForwardData)
 from vllm.model_executor.layers.activation import SiluAndMul
 from vllm.model_executor.layers.attention_layer_base import AttentionLayerBase
 from vllm.model_executor.layers.fused_moe import SharedFusedMoE
@@ -1249,8 +1249,6 @@ class DeepseekV2DecoderLayer(nn.Module):
 
     def compute_ffn_output(self, hidden_states):
         assert self.role == "ffn"
-        # afd_connector = get_afd_connector()
-        # hidden_states = afd_connector.recv_attn_output()
         hidden_states = self.mlp(hidden_states)
         if isinstance(self.mlp,
                       DeepseekV2MLP) and hidden_states.dtype == torch.float16:
@@ -1602,8 +1600,7 @@ class DeepseekV2ForCausalLM(
                 if rocm_aiter_moe_shared_expert_enabled
                 else 0
             ),
-            # num_redundant_experts=self.num_redundant_experts,
-            num_redundant_experts=self.num_redundant_experts,
+            num_redundant_experts=num_redundant_experts,
         )
 
         params_dict = dict(self.named_parameters())

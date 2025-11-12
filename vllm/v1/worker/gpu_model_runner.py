@@ -150,8 +150,6 @@ from vllm.v1.worker.ubatch_utils import (
     UBatchSlice,
     UBatchSlices,
     check_ubatch_thresholds,
-    create_ubatch_slices,
-    create_ubatch_multi_slices
 )
 from vllm.v1.worker.utils import is_residual_scattered_for_sp
 from vllm.platforms import current_platform
