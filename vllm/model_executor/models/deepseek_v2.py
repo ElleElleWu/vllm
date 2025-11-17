@@ -1085,7 +1085,7 @@ class DeepseekV2DecoderLayer(nn.Module):
         parallel_config = vllm_config.parallel_config
 
         afd_config = vllm_config.afd_config
-        self.role = afd_config.afd_role
+        self.afd_role = afd_config.afd_role if afd_config is not None else None
         self.hidden_size = config.hidden_size
         rope_theta = getattr(config, "rope_theta", 10000)
         rope_scaling = getattr(config, "rope_scaling", None)
@@ -1111,7 +1111,7 @@ class DeepseekV2DecoderLayer(nn.Module):
             attn_cls = DeepseekV2MLAAttention
         else:
             attn_cls = DeepseekV2Attention
-        if self.role is None or self.role == "attention":
+        if self.afd_role is None or self.afd_role == "attention":
             self.self_attn = attn_cls(
                 vllm_config=vllm_config,
                 config=config,
@@ -1131,7 +1131,7 @@ class DeepseekV2DecoderLayer(nn.Module):
                 topk_indices_buffer=topk_indices_buffer,
             )
 
-        if self.role is None or self.role == "ffn":
+        if self.afd_role is None or self.afd_role == "ffn":
             if (
                 config.n_routed_experts is not None
                 and layer_idx >= config.first_k_dense_replace
@@ -1165,12 +1165,6 @@ class DeepseekV2DecoderLayer(nn.Module):
         residual: torch.Tensor | None,
     ) -> torch.Tensor:
         # Self Attention
-        forward_ctx = get_forward_context()
-        afd_metadata = (forward_ctx.afd_metadata
-                        if forward_ctx is not None else None)
-        afd_connector = afd_metadata.afd_connector
-        logger.info(f"attn decode layer :{self.layer_idx}")
-        logger.info(f"hidden states type: {type(hidden_states)}")
         if residual is None:
             residual = hidden_states.clone()
             hidden_states = self.input_layernorm(hidden_states)
@@ -1197,9 +1191,7 @@ class DeepseekV2DecoderLayer(nn.Module):
         # Fully Connected
         hidden_states, residual = self.post_attention_layernorm(
             hidden_states, residual)
-        if self.role == "attention":
-            #afd_connector.send_attn_output(hidden_states, None)
-            #hidden_states, _ = afd_connector.recv_ffn_output()
+        if self.afd_role == "attention":
             return hidden_states, residual
 
         hidden_states = self.mlp(hidden_states)
@@ -1248,7 +1240,7 @@ class DeepseekV2DecoderLayer(nn.Module):
         return hidden_states, residual
 
     def compute_ffn_output(self, hidden_states):
-        assert self.role == "ffn"
+        assert self.afd_role == "ffn"
         hidden_states = self.mlp(hidden_states)
         if isinstance(self.mlp,
                       DeepseekV2MLP) and hidden_states.dtype == torch.float16:
@@ -1459,6 +1451,7 @@ class DeepseekV2ForCausalLM(
             self.packed_modules_mapping["qkv_proj"] = ["q_proj", "k_proj", "v_proj"]
 
         self.afd_config = vllm_config.afd_config
+        self.afd_role = self.afd_config.afd_role if self.afd_config is not None else None
         # `packed_modules_mapping` needs to be modified before
         # initializing DeepseekV2Model, as it is passed inplace to
         # quantization config init and may be used to select the
@@ -1507,14 +1500,14 @@ class DeepseekV2ForCausalLM(
                 continue
 
             assert isinstance(layer, DeepseekV2DecoderLayer)
-            if (self.afd_config.afd_role is None or self.afd_config.afd_role == "ffn") and isinstance(
+            if (self.afd_role is None or self.afd_role == "ffn") and isinstance(
                 layer.mlp, DeepseekV2MoE):
                 # Pick last one layer since the first ones may be dense layers.
                 example_moe = layer.mlp
                 self.moe_mlp_layers.append(layer.mlp)
                 self.moe_layers.append(layer.mlp.experts)
 
-        if self.afd_config.afd_role == "attention":
+        if self.afd_role == "attention":
             return        
         self.extract_moe_parameters(example_moe)
 
@@ -1585,7 +1578,7 @@ class DeepseekV2ForCausalLM(
 
         # Params for weights, fp8 weight scales, fp8 activation scales
         # (param_name, weight_name, expert_id, shard_id)
-        if self.afd_config.afd_role == "attention":
+        if self.afd_role == "attention":
             vllm_config = get_current_vllm_config()
             num_redundant_experts = vllm_config.parallel_config.eplb_config.num_redundant_experts
         else:
@@ -1609,7 +1602,7 @@ class DeepseekV2ForCausalLM(
             if "rotary_emb.inv_freq" in name:
                 continue
 
-            if self.afd_config.afd_role == "attention" and self.is_moe_weight(name):
+            if self.afd_role == "attention" and self.is_moe_weight(name):
                 continue
 
             spec_layer = get_spec_layer_idx_from_weight_name(self.config, name)
@@ -1712,8 +1705,8 @@ class DeepseekV2ForCausalLM(
                         # Anyway, this is an expert weight and should not be
                         # attempted to load as other weights later
                         is_expert_weight = True
-                        if self.afd_config.afd_role is not None and \
-                            self.afd_config.afd_role == "attention":
+                        if self.afd_role is not None and \
+                            self.afd_role == "attention":
                             continue
                         # Do not modify `name` since the loop may continue here
                         # Instead, create a new variable
@@ -1745,7 +1738,7 @@ class DeepseekV2ForCausalLM(
                             break
                     else:
                         if (
-                            self.afd_config.afd_role == "ffn"
+                            self.afd_role == "ffn"
                             and not self.is_moe_weight(name)
                             and not self.is_common_weight(name)
                         ):

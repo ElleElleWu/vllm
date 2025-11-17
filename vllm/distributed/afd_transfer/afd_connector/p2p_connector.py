@@ -59,7 +59,7 @@ class P2PAFDConnector(AFDConnectorBase):
             f"world_size = {ffn_size + attn_size}, world_rank = {world_rank}")
         afd_pg = init_afd_process_group(
             backend="nccl",
-            init_method=f"tcp://127.0.0.1:29500",
+            init_method=f"tcp://{self.config.afd_config.afd_host}:{self.config.afd_config.afd_port}",
             world_size=ffn_size + attn_size,
             rank=world_rank,
             group_name="afd",
