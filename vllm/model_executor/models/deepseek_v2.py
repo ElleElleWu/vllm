@@ -274,20 +274,24 @@ class DeepseekV2MoE(nn.Module):
                 f"Unsupported activation: {config.hidden_act}. "
                 "Only silu is supported for now."
             )
-
-        self.gate = ReplicatedLinear(
-            config.hidden_size,
-            config.n_routed_experts,
-            bias=False,
-            quant_config=None,
-            prefix=f"{prefix}.gate",
-        )
-        if getattr(config, "topk_method", None) == "noaux_tc":
-            self.gate.e_score_correction_bias = nn.Parameter(
-                torch.empty(config.n_routed_experts, dtype=torch.float32)
+        config = get_current_vllm_config()
+        self.afd_config = getattr(config, "afd_config", None)
+        if self.afd_config is None or not self.afd_config.compute_gate_on_attention:
+            self.gate = ReplicatedLinear(
+                config.hidden_size,
+                config.n_routed_experts,
+                bias=False,
+                quant_config=None,
+                prefix=f"{prefix}.gate",
             )
+            if getattr(config, "topk_method", None) == "noaux_tc":
+                self.gate.e_score_correction_bias = nn.Parameter(
+                    torch.empty(config.n_routed_experts, dtype=torch.float32)
+                )
+            else:
+                self.gate.e_score_correction_bias = None
         else:
-            self.gate.e_score_correction_bias = None
+            self.gate = None
 
         # Load balancing settings.
         eplb_config = parallel_config.eplb_config
@@ -397,6 +401,76 @@ class DeepseekV2MoE(nn.Module):
             final_hidden_states = self.experts.maybe_all_reduce_tensor_model_parallel(
                 final_hidden_states
             )
+
+        return final_hidden_states.view(num_tokens, hidden_dim)
+    
+    def afd_forward(
+        self, 
+        hidden_states: torch.Tensor,
+        router_logits:  Optional[torch.Tensor] = None,
+        group_list:  Optional[torch.Tensor] = None,
+        dynamic_scales:  Optional[torch.Tensor] = None,
+        topk_weights: Optional[torch.Tensor] = None,
+        topk_ids: Optional[torch.Tensor] = None,
+        row_idx: Optional[torch.Tensor] = None,
+        ) -> torch.Tensor:
+        num_tokens, hidden_dim = hidden_states.shape
+        # TODO(yxj):dynamic_scales --> dynamic_scale
+        # if self.connector_name == "m2nconnector" or self.connector_name == "camconnector":
+        #     fused_moe_out = self.experts.afd_m2n_ffn_compute(
+        #         layer=self.experts,  
+        #         hidden_states=hidden_states,  
+        #         group_list=group_list, 
+        #         dynamic_scale=dynamic_scales,
+        #         connector_name=self.connector_name
+        #         )
+        # else:
+        #     fused_moe_out = self.experts.afd_ffn_compute(
+        #         layer=self.experts, 
+        #         hidden_states=hidden_states, 
+        #         router_logits=router_logits, 
+        #         topk_weights=topk_weights, 
+        #         topk_ids=topk_ids, 
+        #         row_idx=row_idx)
+
+        kwargs = {
+            "hidden_states": hidden_states,
+            "router_logits": router_logits,
+            "topk_weights": topk_weights,
+            "topk_ids": topk_ids,
+            "row_idx": row_idx,
+            "group_list": group_list,
+            "dynamic_scales": dynamic_scales,
+        }
+
+        fused_moe_out = self.experts.afd_ffn_compute(
+            **kwargs)
+        if self.shared_experts is not None:
+            shared_output, final_hidden_states = fused_moe_out
+        else:
+            shared_output = None
+            final_hidden_states = fused_moe_out
+
+        # Fix FP16 overflow
+        # See DeepseekV2DecoderLayer for more details.
+        if hidden_states.dtype != torch.float16:
+            final_hidden_states *= self.routed_scaling_factor
+        elif self.shared_experts is not None:
+            assert shared_output is not None
+            shared_output *= (1. / self.routed_scaling_factor)
+
+        if self.shared_experts is not None:
+            assert shared_output is not None
+            final_hidden_states += shared_output
+
+        if self.is_sequence_parallel:
+            final_hidden_states = tensor_model_parallel_all_gather(
+                final_hidden_states, 0)
+            final_hidden_states = final_hidden_states[:num_tokens]
+        elif self.tp_size > 1:
+            final_hidden_states = (
+                self.experts.maybe_all_reduce_tensor_model_parallel(
+                    final_hidden_states))
 
         return final_hidden_states.view(num_tokens, hidden_dim)
 
@@ -1239,9 +1313,28 @@ class DeepseekV2DecoderLayer(nn.Module):
 
         return hidden_states, residual
 
-    def compute_ffn_output(self, hidden_states):
+    def compute_ffn_output(
+            self,
+            hidden_states: torch.Tensor,
+            router_logits: Optional[torch.Tensor] = None,
+            group_list: Optional[torch.Tensor] = None,
+            dynamic_scales: Optional[torch.Tensor] = None,
+            topk_weights: Optional[torch.Tensor] = None,
+            topk_ids: Optional[torch.Tensor] = None,
+            row_idx: Optional[torch.Tensor] = None):
         assert self.afd_role == "ffn"
-        hidden_states = self.mlp(hidden_states)
+        assert self.afd_config is not None
+        if self.afd_config.compute_gate_on_attention:
+            hidden_states = self.mlp.afd_forward(
+                hidden_states = hidden_states, 
+                group_list = group_list,
+                dynamic_scales = dynamic_scales,
+                topk_weights=topk_weights,
+                topk_ids=topk_ids,
+                row_idx=row_idx,
+                router_logits=router_logits)
+        else:
+            hidden_states = self.mlp(hidden_states)
         if isinstance(self.mlp,
                       DeepseekV2MLP) and hidden_states.dtype == torch.float16:
             # Fix FP16 overflow

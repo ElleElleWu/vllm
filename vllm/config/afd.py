@@ -42,6 +42,9 @@ class AFDConfig:
     afd_server_rank: int = 0
     """Rank of this AFD server."""
 
+    compute_gate_on_attention: bool = False
+    """Whether to compute the gate on the attention side."""
+
     afd_extra_config: dict[str, Any] = field(default_factory=dict)
     """Extra configuration for specific AFD connectors."""
 
