@@ -6,7 +6,7 @@ When the --enable-dbo flag is currently enabled, the num_stage parameter becomes
 1. Attn
 
 ```
-vllm serve "/path/to/DeepSeek-V2-Lite"  --tensor_parallel_size=2 --enable_expert_parallel --enforce_eager --enable-dbo --dbo-prefill-threshold 12 --dbo-decode-token-threshold 2 --afd-config '{"afd_connector":"p2pconnector", "afd_role": "attention", "afd_host":"127.0.0.1", "afd_port":"29500","num_afd_stages":"2","afd_extra_config":{"afd_size":"2A2F"}}'
+vllm serve "/path/to/DeepSeek-V2-Lite"  --data_parallel_size=2 --enable_expert_parallel --enforce_eager --enable-dbo --dbo-prefill-threshold 12 --dbo-decode-token-threshold 2 --afd-config '{"afd_connector":"p2pconnector", "afd_role": "attention", "afd_host":"127.0.0.1", "afd_port":"29500","num_afd_stages":"2","afd_extra_config":{"afd_size":"2A2F"}}'
 
 ```
 
