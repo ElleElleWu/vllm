@@ -241,6 +241,7 @@ class P2PAFDConnector(AFDConnectorBase):
         if self.recv_attn_output_counter % \
             (self._current_afd_connector_metadata.num_of_stages * self.num_hidden_layers) == 0:
             self._need_recv_metadata = True
+            self.recv_attn_output_counter = 0
             logger.info(f"jcz send_ffn_output recv_attn_output_counter: {self.recv_attn_output_counter} detected, "
                         f"self._current_afd_connector_metadata.num_of_stages:{self._current_afd_connector_metadata.num_of_stages} "
                         f"self.num_hidden_layers:{self.num_hidden_layers} "
