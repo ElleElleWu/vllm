@@ -49,7 +49,7 @@ class AFDConnectorMetadata:
     timestamp: Optional[float] = None
     """ffn need forward data"""
     ffn_need_forward_data: Optional[FFNNeedForwardData] = None
-    num_of_stages: int
+    num_of_stages: int = 1
 
     def __post_init__(self):
         """Validate data consistency."""
