@@ -39,7 +39,7 @@ class P2PAFDConnector(AFDConnectorBase):
         self._initialized = False
         self.config = config
         self._need_recv_metadata: bool = True
-        self._tensor_metadata_list: dict[int, TensorMetadata] = []
+        self._tensor_metadata_list: dict[int, TensorMetadata] = dict()
         self._current_afd_connector_metadata: AFDConnectorMetadata | None = None
         self.num_hidden_layers = self.config.model_config.hf_config.num_hidden_layers
         self.recv_attn_output_counter: int = 0
