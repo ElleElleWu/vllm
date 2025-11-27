@@ -247,7 +247,7 @@ class P2PAFDConnector(AFDConnectorBase):
         src = (self.e2a_group.rank_in_group - 1) % self.e2a_group.world_size
 
         logger.info(f"jcz recv_ffn_output src:{src}")
-        hidden_states, work_list = self._recv_hidden_states(src, self.a2e_group)
+        hidden_states, work_list = self._recv_hidden_states(src, self.e2a_group)
         logger.info(f"jcz recv_ffn_output hidden_states received shape:{hidden_states.shape}")
         self._current_afd_connector_metadata.recv_handle_list = work_list
         return hidden_states, self._current_afd_connector_metadata
