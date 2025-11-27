@@ -150,6 +150,7 @@ class PyNcclCommunicator:
             data = torch.zeros(1, device=device)
             self.all_reduce(data)
             stream.synchronize()
+            logger.info("jcz PyNcclCommunicator 6")
             del data
 
     def all_reduce(

@@ -186,6 +186,7 @@ class P2PAFDConnector(AFDConnectorBase):
                 logger.info(f"jcz send_attn_output sending metadata")
                 self._send_metadata(metadata, hidden_states, dst, self.a2e_group)
             logger.info(f"jcz send_attn_output sending hidden_states shape:{hidden_states.shape}")
+            torch.cuda.current_stream().synchronize()
             self._send_hidden_states(hidden_states, dst, self.a2e_group)
         except Exception as e:
             raise RuntimeError(f"Communication error: {e}")
