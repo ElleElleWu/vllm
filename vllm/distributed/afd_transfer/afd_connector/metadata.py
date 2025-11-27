@@ -29,7 +29,6 @@ class FFNNeedForwardData:
 class AFDConnectorMetadata:
     """Lightweight AFD metadata containing core information needed for
     communication."""
-    num_of_stages: int
     layer_idx: int
     stage_idx: int
     seq_lens: list[
@@ -50,6 +49,7 @@ class AFDConnectorMetadata:
     timestamp: Optional[float] = None
     """ffn need forward data"""
     ffn_need_forward_data: Optional[FFNNeedForwardData] = None
+    num_of_stages: int
 
     def __post_init__(self):
         """Validate data consistency."""
@@ -87,7 +87,8 @@ class AFDConnectorMetadata:
             dtype: torch.dtype,
             device: torch.device,
             request_id: Optional[str] = None,
-            ffn_need_forward_data:Optional[FFNNeedForwardData] = None) -> "AFDConnectorMetadata":
+            ffn_need_forward_data:Optional[FFNNeedForwardData] = None,
+            num_of_stages: int = 1) -> "AFDConnectorMetadata":
         """Create metadata for attention side (single sequence)."""
         return cls(layer_idx=layer_idx,
                    stage_idx=stage_idx,
@@ -96,7 +97,8 @@ class AFDConnectorMetadata:
                    device=device,
                    request_id=request_id,
                    ffn_need_forward_data=ffn_need_forward_data,
-                   timestamp=time.time())
+                   timestamp=time.time(),
+                   num_of_stages=num_of_stages)
 
     @classmethod
     def create_ffn_metadata(

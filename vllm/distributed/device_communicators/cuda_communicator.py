@@ -30,6 +30,7 @@ class CudaCommunicator(DeviceCommunicatorBase):
         unique_name: str = "",
     ):
         super().__init__(cpu_group, device, device_group, unique_name)
+        logger.info("jcz CudaCommunicator 1")
         if "tp" not in unique_name:
             # custom allreduce or torch symm mem can be used only by tp
             use_custom_allreduce = False
@@ -42,6 +43,7 @@ class CudaCommunicator(DeviceCommunicatorBase):
 
         self.use_custom_allreduce = use_custom_allreduce
         self.use_torch_symm_mem = use_torch_symm_mem
+        logger.info("jcz CudaCommunicator 2")
 
         # lazy import to avoid documentation build error
         from vllm.distributed.device_communicators.custom_all_reduce import (
@@ -55,12 +57,14 @@ class CudaCommunicator(DeviceCommunicatorBase):
 
         self.pynccl_comm: PyNcclCommunicator | None = None
         if self.world_size > 1:
+            logger.info("jcz CudaCommunicator 3")
             self.pynccl_comm = PyNcclCommunicator(
                 group=self.cpu_group,
                 device=self.device,
             )
             if is_symmetric_memory_enabled():
                 register_nccl_symmetric_ops(self.pynccl_comm)
+        logger.info("jcz CudaCommunicator 4")
 
         self.ca_comm: CustomAllreduce | None = None
         self.qr_comm: QuickAllReduce | None = None
@@ -70,6 +74,7 @@ class CudaCommunicator(DeviceCommunicatorBase):
                 group=self.cpu_group,
                 device=self.device,
             )
+        logger.info("jcz CudaCommunicator 5")
 
         if use_custom_allreduce and self.world_size > 1:
             # Initialize a custom fast all-reduce implementation.
@@ -88,6 +93,7 @@ class CudaCommunicator(DeviceCommunicatorBase):
                 # If it's a rocm, 'use_custom_allreduce==True' means it must
                 # currently be an MI300 series.
                 self.qr_comm = QuickAllReduce(group=self.cpu_group, device=self.device)
+        logger.info("jcz CudaCommunicator 6")
 
         if self.use_all2all:
             if self.all2all_backend == "naive":
@@ -122,6 +128,7 @@ class CudaCommunicator(DeviceCommunicatorBase):
                 self.all2all_manager.__class__.__name__,
                 scope="global",
             )
+        logger.info("jcz CudaCommunicator 7")
 
     def all_reduce(self, input_):
         # since currently we perform copy input -> symm_input -> out-of-place AR

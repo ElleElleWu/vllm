@@ -326,7 +326,7 @@ class GroupCoordinator:
 
         self_device_group = None
         self_cpu_group = None
-
+        logger.info("jcz GroupCoordinator 1")
         for ranks in group_ranks:
             device_group = torch.distributed.new_group(
                 ranks, backend=torch_distributed_backend
@@ -357,6 +357,7 @@ class GroupCoordinator:
             self.device = torch.device(f"{current_platform.device_name}:{local_rank}")
         else:
             self.device = torch.device("cpu")
+        logger.info("jcz GroupCoordinator 2")
 
         self.use_device_communicator = use_device_communicator
         self.device_communicator = None
@@ -370,6 +371,7 @@ class GroupCoordinator:
                 device_group=self.device_group,
                 unique_name=self.unique_name,
             )
+        logger.info("jcz GroupCoordinator 3")
 
         from vllm.distributed.device_communicators.shm_broadcast import MessageQueue
 
@@ -388,6 +390,7 @@ class GroupCoordinator:
         self.use_cpu_custom_send_recv = current_platform.is_cpu() and hasattr(
             torch.ops._C, "init_shm_manager"
         )
+        logger.info("jcz GroupCoordinator 4")
 
     @property
     def first_rank(self):

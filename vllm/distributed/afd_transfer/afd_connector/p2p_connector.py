@@ -85,6 +85,7 @@ class P2PAFDConnector(AFDConnectorBase):
             # e2a_group: for expert/ffn -> attention communication (send_ffn, recv_ffn)
             # The communication domain (rank range) is the same, but different group_name
             # creates independent groups
+            logger.info(f"jcz begin init_afd_connector a2e_group")
             self.a2e_group = init_model_parallel_group(sub_group_ranks,
                                                  self.local_rank,
                                                  backend="nccl",
