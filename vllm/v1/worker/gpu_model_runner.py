@@ -1333,6 +1333,7 @@ class GPUModelRunner(
                 afd_stage_idx=0,
                 afd_connector=self.afd_connector,
                 afd_tokens_lens=afd_tokens_lens,
+                num_of_stages=len(ubatch_slices) if ubatch_slices else 1,
             )
         else:
             afd_metadata = None
@@ -3600,6 +3601,7 @@ class GPUModelRunner(
                     afd_stage_idx=0,
                     afd_connector=self.afd_connector,
                     afd_tokens_lens=afd_tokens_lens,
+                    num_of_stages=self.vllm_config.afd_config.num_afd_stages,
                 )
             else:
                 afd_metadata = AFDMetadata(
@@ -3608,6 +3610,7 @@ class GPUModelRunner(
                     afd_stage_idx=0,
                     afd_connector=self.afd_connector,
                     afd_tokens_lens=[1] * num_tokens,
+                    num_of_stages=1,
                 )
         else:
             afd_metadata = None

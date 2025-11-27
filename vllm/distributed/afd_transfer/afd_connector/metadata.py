@@ -29,6 +29,7 @@ class FFNNeedForwardData:
 class AFDConnectorMetadata:
     """Lightweight AFD metadata containing core information needed for
     communication."""
+    num_of_stages: int
     layer_idx: int
     stage_idx: int
     seq_lens: list[

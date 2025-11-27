@@ -227,6 +227,7 @@ class AFDMetadata:
     afd_stage_idx: int
     afd_connector: "AFDConnectorBase"
     afd_tokens_lens: list[int]  # padded lengths for tensor slicing
+    num_of_stages: int
 
 
 @dataclass

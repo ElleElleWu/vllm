@@ -41,6 +41,8 @@ class P2PAFDConnector(AFDConnectorBase):
         self._need_recv_metadata: bool = True
         self._tensor_metadata: TensorMetadata | None = None
         self._current_afd_connector_metadata: AFDConnectorMetadata | None = None
+        self.num_hidden_layers = self.config.model_config.hf_config.num_hidden_layers
+        self.recv_attn_output_counter: int = 0
 
     def close(self) -> None:
         """Close the connector and release resources."""
@@ -177,8 +179,9 @@ class P2PAFDConnector(AFDConnectorBase):
         try:
             torch.cuda.current_stream().synchronize()
             dst = (self.a2e_group.rank_in_group + 1) % self.a2e_group.world_size
-            logger.info(f"jcz send_attn_output metadata.layer_idx:{metadata.layer_idx} dst:{dst}")
-            if metadata.layer_idx == 0:
+            logger.info(f"jcz send_attn_output metadata.layer_idx:{metadata.layer_idx} "
+                        f"mdst:{dst}")
+            if metadata.layer_idx == 0 and metadata.stage_idx == 0:
                 logger.info(f"jcz send_attn_output sending metadata")
                 self._send_metadata(metadata, hidden_states, dst, self.a2e_group)
             logger.info(f"jcz send_attn_output sending hidden_states shape:{hidden_states.shape}")
@@ -207,6 +210,7 @@ class P2PAFDConnector(AFDConnectorBase):
         hidden_states, work_list = self._recv_hidden_states(src, self.a2e_group)
         logger.info(f"jcz recv_attn_output hidden_states received shape:{hidden_states.shape}")
         self._current_afd_connector_metadata.recv_handle_list = work_list
+        self.recv_attn_output_counter += 1
         return hidden_states, self._current_afd_connector_metadata
 
     # -------------------------------------------------------------------------
@@ -227,12 +231,17 @@ class P2PAFDConnector(AFDConnectorBase):
         torch.cuda.current_stream().synchronize()
         dst = (self.e2a_group.rank_in_group + 1) % self.e2a_group.world_size
         
-        logger.info(f"jcz send_ffn_output dst:{dst} shape:{hidden_states.shape}")
+        logger.info(f"jcz send_ffn_output dst:{dst} shape:{hidden_states.shape}"
+                    f" recv_attn_output_counter:{self.recv_attn_output_counter}")
         self._send_hidden_states(hidden_states, dst, self.e2a_group)
 
-        if metadata.layer_idx == self.config.model_config.hf_config.num_hidden_layers - 1:
+        if self.recv_attn_output_counter % \
+            (self._current_afd_connector_metadata.num_of_stages * self.num_hidden_layers) == 0:
             self._need_recv_metadata = True
-            logger.info(f"jcz send_ffn_output last layer {metadata.layer_idx} detected, reset _need_recv_metadata to True")
+            logger.info(f"jcz send_ffn_output recv_attn_output_counter: {self.recv_attn_output_counter} detected, "
+                        f"self._current_afd_connector_metadata.num_of_stages:{self._current_afd_connector_metadata.num_of_stages} "
+                        f"self.num_hidden_layers:{self.num_hidden_layers} "
+                        f"reset _need_recv_metadata to True")
 
     def recv_ffn_output(self) -> torch.Tensor:
         """
