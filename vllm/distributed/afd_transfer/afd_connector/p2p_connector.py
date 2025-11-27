@@ -164,6 +164,8 @@ class P2PAFDConnector(AFDConnectorBase):
         hidden_states = torch.empty(self._tensor_metadata_list[stage_idx].size,
                                     dtype=self._tensor_metadata_list[stage_idx].dtype,
                                     device=self._tensor_metadata_list[stage_idx].device)
+        logger.info(f"jcz _recv_hidden_states stage_idx:{stage_idx} size:{self._tensor_metadata_list[stage_idx].size} "
+                    f"dtype:{self._tensor_metadata_list[stage_idx].dtype} device:{self._tensor_metadata_list[stage_idx].device}")
         work = torch.distributed.irecv(
             hidden_states, src=process_group.ranks[src], group=process_group.device_group
         )
@@ -209,6 +211,8 @@ class P2PAFDConnector(AFDConnectorBase):
         logger.info(f"jcz recv_attn_output src:{src} need_recv_metadata:{self._need_recv_metadata}")
         if self._need_recv_metadata:
             self._recv_metadata(src, self.a2e_group)
+            logger.info(f"jcz self._current_afd_connector_metadata.stage_idx:{self._current_afd_connector_metadata.stage_idx} "
+                        f"self._current_afd_connector_metadata.num_of_stages:{self._current_afd_connector_metadata.num_of_stages}")
             if self._current_afd_connector_metadata.stage_idx >= self._current_afd_connector_metadata.num_of_stages - 1:
                 logger.info("jcz set _need_recv_metadata to False")
                 self._need_recv_metadata = False
