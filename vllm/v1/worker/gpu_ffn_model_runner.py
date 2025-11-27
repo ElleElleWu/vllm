@@ -127,7 +127,8 @@ class GPUFFNModelRunner(LoRAModelRunnerMixin):
         try:
             hidden_states, recv_metadata = self.connector.recv_attn_output()
             current_layer_idx = recv_metadata.layer_idx
-            logger.info(f"layer {current_layer_idx} moe recv hidden states type:{type(hidden_states)}, shape:{hidden_states.shape}")
+            logger.info(f"layer {current_layer_idx} moe recv hidden states type:{type(hidden_states)}, "
+                        f"shape:{hidden_states.shape}")
             num_tokens = hidden_states.shape[0]
             if recv_metadata is not None and recv_metadata.recv_handle_list is not None:
                 for work in recv_metadata.recv_handle_list:

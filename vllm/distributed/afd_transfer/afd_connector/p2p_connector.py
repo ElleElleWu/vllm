@@ -212,6 +212,7 @@ class P2PAFDConnector(AFDConnectorBase):
         hidden_states, work_list = self._recv_hidden_states(src, self.a2e_group)
         logger.info(f"jcz recv_attn_output hidden_states received shape:{hidden_states.shape}")
         self._current_afd_connector_metadata.recv_handle_list = work_list
+        self._current_afd_connector_metadata.layer_idx = self.recv_attn_output_counter // self._current_afd_connector_metadata.num_of_stages
         self.recv_attn_output_counter += 1
         return hidden_states, self._current_afd_connector_metadata
 
