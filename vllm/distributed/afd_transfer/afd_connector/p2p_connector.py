@@ -38,6 +38,9 @@ class P2PAFDConnector(AFDConnectorBase):
         self.local_rank = local_rank
         self._initialized = False
         self.config = config
+        self._need_recv_metadata: bool = True
+        self._tensor_metadata: TensorMetadata | None = None
+        self._current_afd_connector_metadata: AFDConnectorMetadata | None = None
 
     def close(self) -> None:
         """Close the connector and release resources."""
@@ -67,7 +70,7 @@ class P2PAFDConnector(AFDConnectorBase):
         )
         ffn_ranks = [i for i in range(ffn_size, ffn_size + attn_size)]
         attn_ranks = [i for i in range(attn_size)]
-
+        logger.info(f"jcz init_afd_connector ffn_ranks:{ffn_ranks} attn_ranks:{attn_ranks}")
         default_pg_switcher = DefaultProcessGroupSwitcher(
             _get_default_group(), afd_pg)
         with default_pg_switcher:
@@ -84,10 +87,12 @@ class P2PAFDConnector(AFDConnectorBase):
                                                  self.local_rank,
                                                  backend="nccl",
                                                  group_name="a2e")
+            logger.info(f"jcz init_afd_connector a2e_group:{self.a2e_group}")
             self.e2a_group = init_model_parallel_group(sub_group_ranks,
                                                  self.local_rank,
                                                  backend="nccl",
                                                  group_name="e2a")
+            logger.info(f"jcz init_afd_connector e2a_group:{self.e2a_group}")
 
         logger.info("p2p connector initialized")
 
@@ -101,115 +106,62 @@ class P2PAFDConnector(AFDConnectorBase):
         """
         return self._initialized
 
-    def _send_tensor_dict_async(
+    def _send_metadata(
         self,
-        tensor_dict: dict[str, torch.Tensor],
+        metadata: AFDConnectorMetadata,
+        hidden_states: torch.Tensor,
         dst: int,
-        process_group: GroupCoordinator,
-    ) -> list:
-        """Asynchronously send a tensor dictionary.
-        
-        Args:
-            tensor_dict: The tensor dictionary to send
-            dst: Destination rank (local rank)
-            process_group: The process group to use for communication
-            
-        Returns:
-            List of work objects that can be used to wait for operation completion
-        """
+        process_group: GroupCoordinator) -> None:
         if not torch.distributed.is_initialized() or process_group.world_size == 1:
             return []
         
         assert dst < process_group.world_size, f"Invalid dst rank ({dst})"
         
-        # Split tensor dictionary into metadata and tensor list
-        metadata_list, tensor_list = _split_tensor_dict(tensor_dict)
-        
-        # Send metadata first (synchronously, as metadata is small and on CPU)
-        process_group.send_object(metadata_list, dst=dst)
-        
-        # Asynchronously send each tensor
-        work_list = []
-        group = process_group.device_group
-        metadata_group = process_group.cpu_group
-        
-        for tensor in tensor_list:
-            if tensor.numel() == 0:
-                # Skip empty tensors
-                continue
-            
-            if tensor.is_cpu:
-                # CPU tensor uses metadata_group
-                work = torch.distributed.isend(
-                    tensor, dst=process_group.ranks[dst], group=metadata_group
-                )
-            else:
-                # GPU tensor uses device_group
-                work = torch.distributed.isend(
-                    tensor, dst=process_group.ranks[dst], group=group
-                )
-            work_list.append(work)
-        
-        return work_list
+        tensor_metadata = TensorMetadata(hidden_states.device.type, hidden_states.dtype, hidden_states.size())
+        metadata_tuple = (metadata, tensor_metadata)
+        process_group.send_object(metadata_tuple, dst=dst)
+        self._current_afd_connector_metadata = metadata
+    
+    def _recv_metadata(
+        self,
+        src: int,
+        process_group: GroupCoordinator
+    ) -> None:
+        (self._current_afd_connector_metadata, self._tensor_metadata) = process_group.recv_object(src=src)
 
-    def _recv_tensor_dict_async(
+    def _send_hidden_states(
+        self, 
+        hidden_states: torch.Tensor,
+        dst: int,
+        process_group: GroupCoordinator,
+    ) -> None:
+        if not torch.distributed.is_initialized() or process_group.world_size == 1:
+            return []
+        
+        assert dst < process_group.world_size, f"Invalid dst rank ({dst})"
+        assert not hidden_states.is_cpu, "Hidden states must be on GPU"
+        torch.distributed.isend(
+            hidden_states, dst=process_group.ranks[dst], group=process_group.device_group
+        )
+    
+    def _recv_hidden_states(
         self,
         src: int,
         process_group: GroupCoordinator,
-        all_gather_group: Optional["GroupCoordinator"] = None,
-    ) -> tuple[dict[str, torch.Tensor | Any], list]:
-        """Asynchronously receive a tensor dictionary.
-        
-        Args:
-            src: Source rank (local rank)
-            process_group: The process group to use for communication
-            all_gather_group: Group for all-gather optimization
-            
-        Returns:
-            tuple: (tensor_dict, work_list) - tensor dictionary and work object list
-        """
+    ) -> tuple[torch.Tensor, list]:
         if not torch.distributed.is_initialized() or process_group.world_size == 1:
             return {}, []
         
         assert src < process_group.world_size, f"Invalid src rank ({src})"
-        
-        # Receive metadata first synchronously (need to know tensor shape and type)
-        recv_metadata_list = process_group.recv_object(src=src)
-        
-        # Create empty tensor dictionary and work list
-        tensor_dict: dict[str, Any] = {}
+
         work_list = []
-        group = process_group.device_group
-        metadata_group = process_group.cpu_group
+        hidden_states = torch.empty(self._tensor_metadata.size, dtype=self._tensor_metadata.dtype, device=self._tensor_metadata.device)
+        work = torch.distributed.irecv(
+            hidden_states, src=process_group.ranks[src], group=process_group.device_group
+        )
+        work_list.append(work)
         
-        for key, value in recv_metadata_list:
-            if isinstance(value, TensorMetadata):
-                # Create empty tensor from metadata
-                tensor = torch.empty(value.size, dtype=value.dtype, device=value.device)
-                
-                if tensor.numel() == 0:
-                    # Skip empty tensors
-                    tensor_dict[key] = tensor
-                    continue
-                
-                # Asynchronously receive tensor
-                if tensor.is_cpu:
-                    # CPU tensor uses metadata_group
-                    work = torch.distributed.irecv(
-                        tensor, src=process_group.ranks[src], group=metadata_group
-                    )
-                else:
-                    # GPU tensor uses device_group
-                    work = torch.distributed.irecv(
-                        tensor, src=process_group.ranks[src], group=group
-                    )
-                work_list.append(work)
-                tensor_dict[key] = tensor
-            else:
-                # Non-tensor values are added directly
-                tensor_dict[key] = value
-        
-        return tensor_dict, work_list
+        return hidden_states, work_list
 
     def send_attn_output(
         self, hidden_states: torch.Tensor, metadata: AFDConnectorMetadata
@@ -221,30 +173,19 @@ class P2PAFDConnector(AFDConnectorBase):
         * To send the intermediate tensors generated by ATTN instances to FFN.
         """
 
-        intermediate_tensors = IntermediateTensors(
-            {
-                "hidden_states": hidden_states,
-            }
-        )
         try:
-            # Use async send instead of sync send
-            # Use a2e_group for attention -> expert/ffn communication
             torch.cuda.current_stream().synchronize()
             dst = (self.a2e_group.rank_in_group + 1) % self.a2e_group.world_size
-            work_list = self._send_tensor_dict_async(
-                intermediate_tensors.tensors,
-                dst=dst,
-                process_group=self.a2e_group,
-            )
-            # work_list can be used for waiting later if we need to ensure send completion
-            # Here we don't wait, letting the send proceed asynchronously in the background
-            self.a2e_group.send_object(metadata, dst)
-            if metadata is not None:
-                metadata.send_handle_list = work_list
+            logger.info(f"jcz send_attn_output metadata.layer_idx:{metadata.layer_idx} dst:{dst}")
+            if metadata.layer_idx == 0:
+                logger.info(f"jcz send_attn_output sending metadata")
+                self._send_metadata(metadata, hidden_states, dst, self.a2e_group)
+            logger.info(f"jcz send_attn_output sending hidden_states shape:{hidden_states.shape}")
+            self._send_hidden_states(hidden_states, dst, self.a2e_group)
         except Exception as e:
             raise RuntimeError(f"Communication error: {e}")
 
-    def recv_attn_output(self) -> IntermediateTensors:
+    def recv_attn_output(self) -> torch.Tensor:
         """
         This method will be called by the FFN side.
 
@@ -252,18 +193,20 @@ class P2PAFDConnector(AFDConnectorBase):
         * To receive the intermediate tensors from ATTN.
         * And (Maybe) dispatch them from the receiver to other GPUs.
         """
+
         # Use a2e_group for attention -> expert/ffn communication
         src = (self.a2e_group.rank_in_group - 1) % self.a2e_group.world_size
+        logger.info(f"jcz recv_attn_output src:{src} need_recv_metadata:{self._need_recv_metadata}")
+        if self._need_recv_metadata:
+            self._recv_metadata(src, self.a2e_group)
+            self._need_recv_metadata = False
+            logger.info(f"jcz recv_attn_output metadata received")
         # Use async receive for tensor_dict
-        intermediate_tensors, work_list = self._recv_tensor_dict_async(
-            src=src,
-            process_group=self.a2e_group,
-            all_gather_group=None,
-        )
-        # Asynchronously receive independent metadata
-        metadata = self.a2e_group.recv_object(src)
-        metadata.recv_handle_list = work_list
-        return intermediate_tensors["hidden_states"], metadata
+        logger.info(f"jcz recv_attn_output receiving hidden_states")
+        hidden_states, work_list = self._recv_hidden_states(src, self.a2e_group)
+        logger.info(f"jcz recv_attn_output hidden_states received shape:{hidden_states.shape}")
+        self._current_afd_connector_metadata.recv_handle_list = work_list
+        return hidden_states, self._current_afd_connector_metadata
 
     # -------------------------------------------------------------------------
     #                                attn <- ffn
@@ -278,25 +221,17 @@ class P2PAFDConnector(AFDConnectorBase):
         * To send the intermediate tensors generated by FFN instances back to
             the sender (this should be the same GPU as it comes from)
         """
-        intermediate_tensors = IntermediateTensors(
-            {
-                "hidden_states": hidden_states,
-            }
-        )
         # Use async send instead of sync send
         # Use e2a_group for expert/ffn -> attention communication
         torch.cuda.current_stream().synchronize()
         dst = (self.e2a_group.rank_in_group + 1) % self.e2a_group.world_size
-        work_list = self._send_tensor_dict_async(
-            intermediate_tensors.tensors,
-            dst=dst,
-            process_group=self.e2a_group,
-        )
-        # work_list can be used for waiting later if we need to ensure send completion
-        # Here we don't wait, letting the send proceed asynchronously in the background
-        self.e2a_group.send_object(metadata, dst)
-        if metadata is not None:
-            metadata.send_handle_list = work_list
+        
+        logger.info(f"jcz send_ffn_output dst:{dst} shape:{hidden_states.shape}")
+        self._send_hidden_states(hidden_states, dst, self.e2a_group)
+
+        if metadata.layer_idx == self.config.model_config.hf_config.num_hidden_layers - 1:
+            self._need_recv_metadata = True
+            logger.info(f"jcz send_ffn_output last layer {metadata.layer_idx} detected, reset _need_recv_metadata to True")
 
     def recv_ffn_output(self) -> torch.Tensor:
         """
@@ -309,14 +244,9 @@ class P2PAFDConnector(AFDConnectorBase):
         """
         # Use e2a_group for expert/ffn -> attention communication
         src = (self.e2a_group.rank_in_group - 1) % self.e2a_group.world_size
-        # Use async receive for tensor_dict
-        intermediate_tensors, work_list = self._recv_tensor_dict_async(
-            src=src,
-            process_group=self.e2a_group,
-            all_gather_group=None,
-        )
-        # Asynchronously receive independent metadata
-        metadata = self.e2a_group.recv_object(src)
-        # Wait for tensor receive completion (because we need to use data immediately)
-        metadata.recv_handle_list = work_list
-        return intermediate_tensors["hidden_states"], metadata
+
+        logger.info(f"jcz recv_ffn_output src:{src}")
+        hidden_states, work_list = self._recv_hidden_states(src, self.a2e_group)
+        logger.info(f"jcz recv_ffn_output hidden_states received shape:{hidden_states.shape}")
+        self._current_afd_connector_metadata.recv_handle_list = work_list
+        return hidden_states, self._current_afd_connector_metadata
