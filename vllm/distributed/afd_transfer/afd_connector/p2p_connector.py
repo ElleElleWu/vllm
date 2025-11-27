@@ -87,12 +87,12 @@ class P2PAFDConnector(AFDConnectorBase):
                                                  self.local_rank,
                                                  backend="nccl",
                                                  group_name="a2e")
-            logger.info(f"jcz init_afd_connector a2e_group:{self.a2e_group} ranks_in_group:{self.a2e_group.ranks_in_group}")
+            logger.info(f"jcz init_afd_connector a2e_group:{self.a2e_group} rank_in_group:{self.a2e_group.rank_in_group}")
             self.e2a_group = init_model_parallel_group(sub_group_ranks,
                                                  self.local_rank,
                                                  backend="nccl",
                                                  group_name="e2a")
-            logger.info(f"jcz init_afd_connector e2a_group:{self.e2a_group} ranks_in_group:{self.a2e_group.ranks_in_group}")
+            logger.info(f"jcz init_afd_connector e2a_group:{self.e2a_group} rank_in_group:{self.a2e_group.rank_in_group}")
 
         logger.info("p2p connector initialized")
 
