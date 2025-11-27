@@ -121,6 +121,7 @@ class P2PAFDConnector(AFDConnectorBase):
         metadata_tuple = (metadata, tensor_metadata)
         process_group.send_object(metadata_tuple, dst=dst)
         self._current_afd_connector_metadata = metadata
+        self._tensor_metadata = tensor_metadata
     
     def _recv_metadata(
         self,
