@@ -132,7 +132,7 @@ class P2PAFDConnector(AFDConnectorBase):
         process_group: GroupCoordinator
     ) -> None:
         (self._current_afd_connector_metadata, tensor_metadata) = process_group.recv_object(src=src)
-        self._tensor_metadata_list[self._current_afd_connector_metadata.layer_idx] = tensor_metadata
+        self._tensor_metadata_list[self._current_afd_connector_metadata.stage_idx] = tensor_metadata
 
     def _send_hidden_states(
         self, 
