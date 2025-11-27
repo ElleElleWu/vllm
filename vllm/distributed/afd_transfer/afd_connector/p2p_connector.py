@@ -39,7 +39,7 @@ class P2PAFDConnector(AFDConnectorBase):
         self._initialized = False
         self.config = config
         self._need_recv_metadata: bool = True
-        self._tensor_metadata: TensorMetadata | None = None
+        self._tensor_metadata_list: dict[int, TensorMetadata] = []
         self._current_afd_connector_metadata: AFDConnectorMetadata | None = None
         self.num_hidden_layers = self.config.model_config.hf_config.num_hidden_layers
         self.recv_attn_output_counter: int = 0
@@ -124,14 +124,15 @@ class P2PAFDConnector(AFDConnectorBase):
         metadata_tuple = (metadata, tensor_metadata)
         process_group.send_object(metadata_tuple, dst=dst)
         self._current_afd_connector_metadata = metadata
-        self._tensor_metadata = tensor_metadata
+        self._tensor_metadata_list[metadata.stage_idx] = tensor_metadata
     
     def _recv_metadata(
         self,
         src: int,
         process_group: GroupCoordinator
     ) -> None:
-        (self._current_afd_connector_metadata, self._tensor_metadata) = process_group.recv_object(src=src)
+        (self._current_afd_connector_metadata, tensor_metadata) = process_group.recv_object(src=src)
+        self._tensor_metadata_list[self._current_afd_connector_metadata.layer_idx] = tensor_metadata
 
     def _send_hidden_states(
         self, 
@@ -151,6 +152,7 @@ class P2PAFDConnector(AFDConnectorBase):
     def _recv_hidden_states(
         self,
         src: int,
+        stage_idx: int,
         process_group: GroupCoordinator,
     ) -> tuple[torch.Tensor, list]:
         if not torch.distributed.is_initialized() or process_group.world_size == 1:
@@ -159,7 +161,9 @@ class P2PAFDConnector(AFDConnectorBase):
         assert src < process_group.world_size, f"Invalid src rank ({src})"
 
         work_list = []
-        hidden_states = torch.empty(self._tensor_metadata.size, dtype=self._tensor_metadata.dtype, device=self._tensor_metadata.device)
+        hidden_states = torch.empty(self._tensor_metadata_list[stage_idx].size,
+                                    dtype=self._tensor_metadata_list[stage_idx].dtype,
+                                    device=self._tensor_metadata_list[stage_idx].device)
         work = torch.distributed.irecv(
             hidden_states, src=process_group.ranks[src], group=process_group.device_group
         )
@@ -182,7 +186,7 @@ class P2PAFDConnector(AFDConnectorBase):
             dst = (self.a2e_group.rank_in_group + 1) % self.a2e_group.world_size
             logger.info(f"jcz send_attn_output metadata.layer_idx:{metadata.layer_idx} "
                         f"mdst:{dst}")
-            if metadata.layer_idx == 0 and metadata.stage_idx == 0:
+            if metadata.layer_idx == 0:
                 logger.info(f"jcz send_attn_output sending metadata")
                 self._send_metadata(metadata, hidden_states, dst, self.a2e_group)
             logger.info(f"jcz send_attn_output sending hidden_states shape:{hidden_states.shape}")
@@ -205,11 +209,15 @@ class P2PAFDConnector(AFDConnectorBase):
         logger.info(f"jcz recv_attn_output src:{src} need_recv_metadata:{self._need_recv_metadata}")
         if self._need_recv_metadata:
             self._recv_metadata(src, self.a2e_group)
-            self._need_recv_metadata = False
+            if self._current_afd_connector_metadata.stage_idx >= self._current_afd_connector_metadata.num_of_stages - 1:
+                logger.info("jcz set _need_recv_metadata to False")
+                self._need_recv_metadata = False
             logger.info(f"jcz recv_attn_output metadata received")
         # Use async receive for tensor_dict
         logger.info(f"jcz recv_attn_output receiving hidden_states")
-        hidden_states, work_list = self._recv_hidden_states(src, self.a2e_group)
+        hidden_states, work_list = self._recv_hidden_states(src,
+                                                            self.recv_attn_output_counter % self._current_afd_connector_metadata.num_of_stages,
+                                                            self.a2e_group)
         logger.info(f"jcz recv_attn_output hidden_states received shape:{hidden_states.shape}")
         self._current_afd_connector_metadata.recv_handle_list = work_list
         self._current_afd_connector_metadata.layer_idx = self.recv_attn_output_counter // self._current_afd_connector_metadata.num_of_stages
