@@ -73,6 +73,7 @@ class PyNcclCommunicator:
         It is the caller's responsibility to make sure each communicator
         is bind to a unique device.
         """
+        logger.info("jcz PyNcclCommunicator 1")
         if not isinstance(group, StatelessProcessGroup):
             assert dist.is_initialized()
             assert dist.get_backend(group) != dist.Backend.NCCL, (
@@ -86,6 +87,7 @@ class PyNcclCommunicator:
             self.world_size = group.world_size
 
         self.group = group
+        logger.info("jcz PyNcclCommunicator 2")
 
         # if world_size == 1, no need to create communicator
         if self.world_size == 1 or envs.VLLM_DISABLE_PYNCCL:
@@ -115,6 +117,7 @@ class PyNcclCommunicator:
             # construct an empty unique id
             self.unique_id = ncclUniqueId()
 
+        logger.info("jcz PyNcclCommunicator 3")
         if not isinstance(group, StatelessProcessGroup):
             tensor = torch.ByteTensor(list(self.unique_id.internal))
             ranks = dist.get_process_group_ranks(group)
@@ -135,10 +138,12 @@ class PyNcclCommunicator:
         # nccl communicator and stream will use this device
         # `torch.cuda.device` is a context manager that changes the
         # current cuda device to the specified one
+        logger.info("jcz PyNcclCommunicator 4")
         with torch.cuda.device(device):
             self.comm: ncclComm_t = self.nccl.ncclCommInitRank(
                 self.world_size, self.unique_id, self.rank
             )
+            logger.info("jcz PyNcclCommunicator 5")
 
             stream = current_stream()
             # A small all_reduce for warmup.
