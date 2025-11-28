@@ -133,8 +133,8 @@ class P2PAFDConnector(AFDConnectorBase):
         src: int,
         process_group: GroupCoordinator
     ) -> None:
-        (self._current_afd_connector_metadata, tensor_metadata) = process_group.recv_object(src=src)
-        self._tensor_metadata_list[self._current_afd_connector_metadata.stage_idx] = tensor_metadata
+        (metadata, tensor_metadata) = process_group.recv_object(src=src)
+        return metadata, tensor_metadata
 
     def _send_hidden_states(
         self, 
@@ -218,19 +218,22 @@ class P2PAFDConnector(AFDConnectorBase):
 
         # Use a2e_group for attention -> expert/ffn communication
 
-        stage_idx = self.recv_attn_output_counter % self._current_afd_connector_metadata.num_of_stages
-        layer_idx = self.recv_attn_output_counter // self._current_afd_connector_metadata.num_of_stages
-        logger.info(f"jcz recv_attn_output stage_idx:{stage_idx} layer_idx:{layer_idx}")
-        ae_group = self.ae_group[stage_idx]
+        group_idx = self.recv_attn_output_counter % self._current_afd_connector_metadata.num_of_stages \
+              if self._current_afd_connector_metadata is not None else 0
+        logger.info(f"jcz recv_attn_output stage_idx:{group_idx} layer_idx:{layer_idx}")
+        ae_group = self.ae_group[group_idx]
 
         src = (ae_group.rank_in_group - 1) % ae_group.world_size
         if self._need_recv_metadata:
-            self._recv_metadata(src, ae_group)
+            recv_metadata, tensor_metadata = self._recv_metadata(src, ae_group)
+            self._current_afd_connector_metadata = recv_metadata
+            self._tensor_metadata_list[self._current_afd_connector_metadata.stage_idx] = tensor_metadata
             logger.info(f"jcz self._current_afd_connector_metadata.stage_idx:{self._current_afd_connector_metadata.stage_idx} "
                         f"self._current_afd_connector_metadata.num_of_stages:{self._current_afd_connector_metadata.num_of_stages}")
             if self._current_afd_connector_metadata.stage_idx >= self._current_afd_connector_metadata.num_of_stages - 1:
                 logger.info("jcz set _need_recv_metadata to False")
                 self._need_recv_metadata = False
+    
         # Use async receive for tensor_dict
         stage_idx = self.recv_attn_output_counter % self._current_afd_connector_metadata.num_of_stages
         layer_idx = self.recv_attn_output_counter // self._current_afd_connector_metadata.num_of_stages
