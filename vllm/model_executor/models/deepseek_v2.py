@@ -1334,7 +1334,7 @@ class DeepseekV2Model(nn.Module):
                 num_of_stages=afd_metadata.num_of_stages,
             )
             afd_connector.send_attn_output(current_hidden, metadata)
-            logger.info("jcz send_attn_output layer_idx:{layer.layer_idx} stage_idx:{afd_metadata.afd_stage_idx} "
+            logger.info(f"jcz send_attn_output layer_idx:{layer.layer_idx} stage_idx:{afd_metadata.afd_stage_idx} "
                         f"current_hidden shape:{current_hidden.shape} current_hidden:{current_hidden[-1, :]}")
             hidden_states, recv_metadata = afd_connector.recv_ffn_output()
             if recv_metadata.recv_handle_list is not None:
