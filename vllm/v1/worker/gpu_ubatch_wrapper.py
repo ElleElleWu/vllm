@@ -454,6 +454,9 @@ class UBatchWrapper:
             cudagraph_metadata.cudagraph.replay()
             return cudagraph_metadata.outputs
         else:
+            logger.info(f"jcz UBatchWrapper ubatch_slices:{ubatch_slices} "
+                        f"input_ids:{input_ids.shape} "
+                        f"positions:{positions.shape}")
             ubatch_metadata = self._make_ubatch_metadata(
                 ubatch_slices=ubatch_slices,
                 attn_metadata=attn_metadata,
