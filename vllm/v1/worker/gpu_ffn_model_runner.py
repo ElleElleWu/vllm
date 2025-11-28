@@ -133,6 +133,8 @@ class GPUFFNModelRunner(LoRAModelRunnerMixin):
             if recv_metadata is not None and recv_metadata.recv_handle_list is not None:
                 for work in recv_metadata.recv_handle_list:
                     work.wait()
+            logger.info(f"jcz recv_attn_output hidden_states shape:{hidden_states.shape} layer_idx:{current_layer_idx}"
+                        f"hidden_states:{hidden_states[-1, :]}")
             # Try to use CUDA graph if available
             cuda_graph_info = self._find_cuda_graph(current_layer_idx,
                                                     num_tokens)

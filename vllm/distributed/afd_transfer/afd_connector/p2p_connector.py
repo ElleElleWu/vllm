@@ -43,7 +43,8 @@ class P2PAFDConnector(AFDConnectorBase):
         self._current_afd_connector_metadata: AFDConnectorMetadata | None = None
         self.num_hidden_layers = self.config.model_config.hf_config.num_hidden_layers
         self.recv_attn_output_counter: int = 0
-        self._comm_base_tag = 0
+        self._a2e_tag_base: int = 0
+        self._e2a_tag_base: int = 10000
 
     def close(self) -> None:
         """Close the connector and release resources."""
@@ -54,7 +55,6 @@ class P2PAFDConnector(AFDConnectorBase):
         """Initialize the AFD connector."""
         afd_size = self.config.afd_config.afd_extra_config.get("afd_size")
         role = self.config.afd_config.afd_role
-        self._comm_base_tag = 0 if role == "attention" else 10000
         attn_size, ffn_size = map(
             int,
             re.match(r"(\d+)\D+(\d+)", afd_size).groups())
@@ -192,8 +192,11 @@ class P2PAFDConnector(AFDConnectorBase):
                 logger.info(f"jcz send_attn_output sending metadata")
                 self._send_metadata(metadata, hidden_states, dst, self.a2e_group)
             self._current_afd_connector_metadata = metadata
-            # torch.cuda.current_stream().synchronize()
-            self._send_hidden_states(hidden_states, dst, self.a2e_group)
+            torch.cuda.current_stream().synchronize()
+            a2e_tag = self._a2e_tag_base + metadata.num_of_stages * metadata.layer_idx + metadata.stage_idx
+            logger.info("jcz send_attn_output a2e_tag:{a2e_tag} hidden_states shape:{hidden_states.shape} "
+                        f"layer_idx:{metadata.layer_idx} stage_idx:{metadata.stage_idx} num_of_stages:{metadata.num_of_stages}")
+            self._send_hidden_states(hidden_states, dst, self.a2e_group, a2e_tag)
         except Exception as e:
             raise RuntimeError(f"Communication error: {e}")
 
@@ -218,9 +221,13 @@ class P2PAFDConnector(AFDConnectorBase):
         # Use async receive for tensor_dict
         stage_idx = self.recv_attn_output_counter % self._current_afd_connector_metadata.num_of_stages
         layer_idx = self.recv_attn_output_counter // self._current_afd_connector_metadata.num_of_stages
+        a2e_tag = self._a2e_tag_base + self.recv_attn_output_counter
+        logger.info("jcz recv_attn_output a2e_tag:{a2e_tag} hidden_states shape:{hidden_states.shape} "
+                    f"layer_idx:{layer_idx} stage_idx:{stage_idx} num_of_stages:{self._current_afd_connector_metadata.num_of_stages}")
         hidden_states, work_list = self._recv_hidden_states(src,
                                                             stage_idx,
-                                                            self.a2e_group)
+                                                            self.a2e_group,
+                                                            a2e_tag)
         logger.info(f"jcz recv_attn_output hidden_states received shape:{hidden_states.shape} stage_idx:{stage_idx} layer_idx:{layer_idx}")
         self._current_afd_connector_metadata.recv_handle_list = work_list
         self._current_afd_connector_metadata.layer_idx = self.recv_attn_output_counter // self._current_afd_connector_metadata.num_of_stages
@@ -242,11 +249,9 @@ class P2PAFDConnector(AFDConnectorBase):
         """
         # Use async send instead of sync send
         # Use e2a_group for expert/ffn -> attention communication
-        # torch.cuda.current_stream().synchronize()
+        torch.cuda.current_stream().synchronize()
         dst = (self.e2a_group.rank_in_group + 1) % self.e2a_group.world_size
         
-        # logger.info(f"jcz send_ffn_output dst:{dst} shape:{hidden_states.shape}"
-        #             f" recv_attn_output_counter:{self.recv_attn_output_counter}")
         self._send_hidden_states(hidden_states, dst, self.e2a_group)
 
         if self.recv_attn_output_counter % \

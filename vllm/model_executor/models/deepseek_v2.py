@@ -1318,11 +1318,9 @@ class DeepseekV2Model(nn.Module):
             afd_metadata.afd_stage_idx = dbo_current_ubatch_id()
             start_idx = afd_metadata.afd_tokens_start_loc[afd_metadata.afd_stage_idx]
             end_idx = start_idx + afd_metadata.afd_tokens_lens[afd_metadata.afd_stage_idx]
-            logger.info(f"jcz deepseekv2 layer_idx:{layer.layer_idx} metadata:{afd_metadata} "
-                        f"hidden_states:{hidden_states.shape} positions:{positions.shape}")
-            logger.info(f"jcz deepseekv2 layer_idx:{layer.layer_idx} start_loc:{afd_metadata.afd_tokens_start_loc} "
-                        f"start_idx:{start_idx} end_idx:{end_idx} "
-                        f"stage_idx:{afd_metadata.afd_stage_idx}")
+            # logger.info(f"jcz deepseekv2 layer_idx:{layer.layer_idx} start_loc:{afd_metadata.afd_tokens_start_loc} "
+            #             f"start_idx:{start_idx} end_idx:{end_idx} "
+            #             f"stage_idx:{afd_metadata.afd_stage_idx}")
             if recv_handle is not None:
                 for work in recv_handle:
                     work.wait()
@@ -1336,6 +1334,8 @@ class DeepseekV2Model(nn.Module):
                 num_of_stages=afd_metadata.num_of_stages,
             )
             afd_connector.send_attn_output(current_hidden, metadata)
+            logger.info("jcz send_attn_output layer_idx:{layer.layer_idx} stage_idx:{afd_metadata.afd_stage_idx} "
+                        f"current_hidden shape:{current_hidden.shape} current_hidden:{current_hidden[-1, :]}")
             hidden_states, recv_metadata = afd_connector.recv_ffn_output()
             if recv_metadata.recv_handle_list is not None:
                 recv_handle = recv_metadata.recv_handle_list
