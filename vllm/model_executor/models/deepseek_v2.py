@@ -1339,6 +1339,7 @@ class DeepseekV2Model(nn.Module):
                 dtype=current_hidden.dtype,
                 device=current_hidden.device,
                 num_of_stages=afd_metadata.num_of_stages,
+                tokens_of_microbatch=afd_metadata.afd_tokens_start_loc,
             )
             logger.info(f"jcz send_attn_output begin layer_idx:{layer.layer_idx} stage_idx:{afd_metadata.afd_stage_idx} "
                         f"current_hidden shape:{current_hidden.shape} current_hidden:{current_hidden[-1, :]}")

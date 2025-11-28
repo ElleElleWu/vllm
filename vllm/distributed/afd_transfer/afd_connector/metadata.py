@@ -50,6 +50,7 @@ class AFDConnectorMetadata:
     """ffn need forward data"""
     ffn_need_forward_data: Optional[FFNNeedForwardData] = None
     num_of_stages: int = 1
+    afd_tokens_start_loc: list[int] = []
 
     def __post_init__(self):
         """Validate data consistency."""
