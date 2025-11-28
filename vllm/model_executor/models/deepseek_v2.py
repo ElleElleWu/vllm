@@ -1367,9 +1367,10 @@ class DeepseekV2Model(nn.Module):
             afd_metadata.afd_stage_idx = dbo_current_ubatch_id()
             start_idx = afd_metadata.afd_tokens_start_loc[afd_metadata.afd_stage_idx]
             end_idx = start_idx + afd_metadata.afd_tokens_lens[afd_metadata.afd_stage_idx]
-            # logger.info(f"jcz deepseekv2 layer_idx:{layer.layer_idx} start_loc:{afd_metadata.afd_tokens_start_loc} "
-            #             f"start_idx:{start_idx} end_idx:{end_idx} "
-            #             f"stage_idx:{afd_metadata.afd_stage_idx}")
+            logger.info(f"jcz deepseekv2 layer_idx:{layer.layer_idx} start_loc:{afd_metadata.afd_tokens_start_loc} "
+                        f"start_idx:{start_idx} end_idx:{end_idx} "
+                        f"stage_idx:{afd_metadata.afd_stage_idx} "
+                        f"num_of_stages:{afd_metadata.num_of_stages}")
             if recv_handle is not None:
                 for work in recv_handle:
                     work.wait()
