@@ -194,9 +194,6 @@ class DeepseekAttention(nn.Module):
     ) -> torch.Tensor:
         qkv, _ = self.qkv_proj(hidden_states)
         q, k, v = qkv.split([self.q_size, self.kv_size, self.kv_size], dim=-1)
-        logger.info(f"jcz DeepseekAttention forward q shape:{q.shape} k shape:{k.shape} v shape:{v.shape} "
-                    f"positions shape:{positions.shape} qkv shape:{qkv.shape} "
-                    f"hidden_states shape:{hidden_states.shape}")
         q, k = self.rotary_emb(positions, q, k)
         attn_output = self.attn(q, k, v)
         output, _ = self.o_proj(attn_output)

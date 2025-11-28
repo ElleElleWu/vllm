@@ -21,9 +21,6 @@ def yarn_get_mscale(scale: float = 1, mscale: float = 1) -> float:
         return 1.0
     return 0.1 * mscale * math.log(scale) + 1.0
 
-from vllm.logger import init_logger
-logger = init_logger(__name__)
-
 class DeepseekScalingRotaryEmbedding(RotaryEmbeddingBase):
     """RotaryEmbedding extended with YaRN method.
 
@@ -136,9 +133,6 @@ class DeepseekScalingRotaryEmbedding(RotaryEmbeddingBase):
             cos = cos.repeat_interleave(2, dim=-1).unsqueeze(-2)
             sin = sin.repeat_interleave(2, dim=-1).unsqueeze(-2)
 
-        logger.info(f"jcz forward_native cos shape:{cos.shape} sin shape:{sin.shape} "
-                    f"positions shape:{positions.shape} query shape:{query.shape} key shape:{key.shape}"
-                    f" query_rot:{query_rot.shape} key_rot:{key_rot.shape}")
         rotate_fn = rotate_neox if self.is_neox_style else rotate_gptj
         query_rot = query_rot * cos + rotate_fn(query_rot) * sin
         key_rot = key_rot * cos + rotate_fn(key_rot) * sin

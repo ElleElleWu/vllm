@@ -185,12 +185,9 @@ class P2PAFDConnector(AFDConnectorBase):
         try:
             torch.cuda.current_stream().synchronize()
             dst = (self.a2e_group.rank_in_group + 1) % self.a2e_group.world_size
-            logger.info(f"jcz send_attn_output metadata.layer_idx:{metadata.layer_idx} "
-                        f"mdst:{dst}")
             if metadata.layer_idx == 0:
                 logger.info(f"jcz send_attn_output sending metadata")
                 self._send_metadata(metadata, hidden_states, dst, self.a2e_group)
-            logger.info(f"jcz send_attn_output sending hidden_states shape:{hidden_states.shape}")
             self._current_afd_connector_metadata = metadata
             torch.cuda.current_stream().synchronize()
             self._send_hidden_states(hidden_states, dst, self.a2e_group)
@@ -208,7 +205,6 @@ class P2PAFDConnector(AFDConnectorBase):
 
         # Use a2e_group for attention -> expert/ffn communication
         src = (self.a2e_group.rank_in_group - 1) % self.a2e_group.world_size
-        logger.info(f"jcz recv_attn_output src:{src} need_recv_metadata:{self._need_recv_metadata}")
         if self._need_recv_metadata:
             self._recv_metadata(src, self.a2e_group)
             logger.info(f"jcz self._current_afd_connector_metadata.stage_idx:{self._current_afd_connector_metadata.stage_idx} "
@@ -216,9 +212,7 @@ class P2PAFDConnector(AFDConnectorBase):
             if self._current_afd_connector_metadata.stage_idx >= self._current_afd_connector_metadata.num_of_stages - 1:
                 logger.info("jcz set _need_recv_metadata to False")
                 self._need_recv_metadata = False
-            logger.info(f"jcz recv_attn_output metadata received")
         # Use async receive for tensor_dict
-        logger.info(f"jcz recv_attn_output receiving hidden_states")
         stage_idx = self.recv_attn_output_counter % self._current_afd_connector_metadata.num_of_stages
         layer_idx = self.recv_attn_output_counter // self._current_afd_connector_metadata.num_of_stages
         hidden_states, work_list = self._recv_hidden_states(src,
@@ -248,8 +242,8 @@ class P2PAFDConnector(AFDConnectorBase):
         torch.cuda.current_stream().synchronize()
         dst = (self.e2a_group.rank_in_group + 1) % self.e2a_group.world_size
         
-        logger.info(f"jcz send_ffn_output dst:{dst} shape:{hidden_states.shape}"
-                    f" recv_attn_output_counter:{self.recv_attn_output_counter}")
+        # logger.info(f"jcz send_ffn_output dst:{dst} shape:{hidden_states.shape}"
+        #             f" recv_attn_output_counter:{self.recv_attn_output_counter}")
         self._send_hidden_states(hidden_states, dst, self.e2a_group)
 
         if self.recv_attn_output_counter % \
