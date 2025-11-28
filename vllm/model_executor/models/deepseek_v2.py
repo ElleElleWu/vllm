@@ -194,6 +194,9 @@ class DeepseekAttention(nn.Module):
     ) -> torch.Tensor:
         qkv, _ = self.qkv_proj(hidden_states)
         q, k, v = qkv.split([self.q_size, self.kv_size, self.kv_size], dim=-1)
+        logger.info(f"jcz DeepseekAttention forward q shape:{q.shape} k shape:{k.shape} v shape:{v.shape} "
+                    f"positions shape:{positions.shape} qkv shape:{qkv.shape} "
+                    f"hidden_states shape:{hidden_states.shape}")
         q, k = self.rotary_emb(positions, q, k)
         attn_output = self.attn(q, k, v)
         output, _ = self.o_proj(attn_output)
@@ -1314,7 +1317,8 @@ class DeepseekV2Model(nn.Module):
     ) -> tuple[torch.Tensor, torch.Tensor]:
         recv_handle = None
         for layer in islice(self.layers, self.start_layer, self.end_layer):
-            logger.info(f"jcz deepseekv2 layer_idx:{layer.layer_idx} metadata:{afd_metadata} hidden_states:{hidden_states.shape}")
+            logger.info(f"jcz deepseekv2 layer_idx:{layer.layer_idx} metadata:{afd_metadata} "
+                        f"hidden_states:{hidden_states.shape} positions:{positions.shape}")
             afd_connector = afd_metadata.afd_connector
             afd_metadata.afd_stage_idx = dbo_current_ubatch_id()
             start_idx = afd_metadata.afd_tokens_start_loc[afd_metadata.afd_stage_idx]
