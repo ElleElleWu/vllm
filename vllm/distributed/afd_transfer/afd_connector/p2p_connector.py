@@ -198,7 +198,7 @@ class P2PAFDConnector(AFDConnectorBase):
             self._current_afd_connector_metadata = metadata
             torch.cuda.current_stream().synchronize()
             a2e_tag = self._a2e_tag_base + metadata.num_of_stages * metadata.layer_idx + metadata.stage_idx
-            logger.info("jcz send_attn_output a2e_tag:{a2e_tag} hidden_states shape:{hidden_states.shape} "
+            logger.info(f"jcz send_attn_output a2e_tag:{a2e_tag} hidden_states shape:{hidden_states.shape} "
                         f"layer_idx:{metadata.layer_idx} stage_idx:{metadata.stage_idx} num_of_stages:{metadata.num_of_stages}")
             self._send_hidden_states(hidden_states, dst, self.a2e_group, a2e_tag)
         except Exception as e:

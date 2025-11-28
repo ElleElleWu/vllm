@@ -1381,6 +1381,7 @@ class DeepseekV2Model(nn.Module):
                 seq_len=current_hidden.shape[0],
                 dtype=current_hidden.dtype,
                 device=current_hidden.device,
+                num_of_stages=afd_metadata.num_of_stages,
             )
             afd_connector.send_attn_output(current_hidden, metadata)
             hidden_states, recv_metadata = afd_connector.recv_ffn_output()
