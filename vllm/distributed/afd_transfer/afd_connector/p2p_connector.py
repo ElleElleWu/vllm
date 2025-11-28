@@ -140,10 +140,13 @@ class P2PAFDConnector(AFDConnectorBase):
             if idx == 0:
                 self._tensor_metadata_list[0] = tensor_metadata
             else:
-                tensor_metadata_clone = tensor_metadata.clone()
-                tensor_metadata_clone.size[0] = self._current_afd_connector_metadata.tokens_of_microbatch[idx] - \
+                new_size = list(tensor_metadata.size)
+                new_size[0] = self._current_afd_connector_metadata.tokens_of_microbatch[idx] - \
                     self._current_afd_connector_metadata.tokens_of_microbatch[idx - 1]
-                self._tensor_metadata_list[idx] = tensor_metadata_clone
+                self._tensor_metadata_list[idx] = TensorMetadata(
+                    tensor_metadata.device,
+                    tensor_metadata.dtype,
+                    torch.Size(new_size))
         logger.info("jcz _recv_metadata tensor_metadata_list:{}", self._tensor_metadata_list)
 
     def _send_hidden_states(
