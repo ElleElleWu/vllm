@@ -147,9 +147,10 @@ class P2PAFDConnector(AFDConnectorBase):
         
         assert dst < process_group.world_size, f"Invalid dst rank ({dst})"
         assert not hidden_states.is_cpu, "Hidden states must be on GPU"
-        torch.distributed.isend(
-            hidden_states, dst=process_group.ranks[dst], group=process_group.device_group
-        )
+        # torch.distributed.isend(
+        #     hidden_states, dst=process_group.ranks[dst], group=process_group.device_group
+        # )
+        torch.distributed.send(hidden_states, dst=process_group.ranks[dst], group=process_group.device_group)
     
     def _recv_hidden_states(
         self,
@@ -169,12 +170,15 @@ class P2PAFDConnector(AFDConnectorBase):
                                     device=self._tensor_metadata_list[stage_idx].device)
         logger.info(f"jcz _recv_hidden_states stage_idx:{stage_idx} size:{self._tensor_metadata_list[stage_idx].size} "
                     f"dtype:{self._tensor_metadata_list[stage_idx].dtype} device:{self._tensor_metadata_list[stage_idx].device}")
-        work = torch.distributed.irecv(
-            hidden_states, src=process_group.ranks[src], group=process_group.device_group
-        )
-        work_list.append(work)
+        # work = torch.distributed.irecv(
+        #     hidden_states, src=process_group.ranks[src], group=process_group.device_group
+        # )
+        # work_list.append(work)
         
-        return hidden_states, work_list
+        # return hidden_states, work_list
+        torch.distributed.recv(hidden_states, src=process_group.ranks[src], group=process_group.device_group)
+        return hidden_states, []
+
 
     def send_attn_output(
         self, hidden_states: torch.Tensor, metadata: AFDConnectorMetadata
@@ -222,7 +226,7 @@ class P2PAFDConnector(AFDConnectorBase):
         stage_idx = self.recv_attn_output_counter % self._current_afd_connector_metadata.num_of_stages
         layer_idx = self.recv_attn_output_counter // self._current_afd_connector_metadata.num_of_stages
         a2e_tag = self._a2e_tag_base + self.recv_attn_output_counter
-        logger.info("jcz recv_attn_output a2e_tag:{a2e_tag} hidden_states shape:{hidden_states.shape} "
+        logger.info(f"jcz recv_attn_output a2e_tag:{a2e_tag} hidden_states shape:{hidden_states.shape} "
                     f"layer_idx:{layer_idx} stage_idx:{stage_idx} num_of_stages:{self._current_afd_connector_metadata.num_of_stages}")
         hidden_states, work_list = self._recv_hidden_states(src,
                                                             stage_idx,
