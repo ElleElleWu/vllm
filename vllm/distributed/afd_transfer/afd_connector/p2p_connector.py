@@ -141,8 +141,8 @@ class P2PAFDConnector(AFDConnectorBase):
                 self._tensor_metadata_list[0] = tensor_metadata
             else:
                 new_size = list(tensor_metadata.size)
-                new_size[0] = self._current_afd_connector_metadata.tokens_of_microbatch[idx] - \
-                    self._current_afd_connector_metadata.tokens_of_microbatch[idx - 1]
+                new_size[0] = self._current_afd_connector_metadata.afd_tokens_start_loc[idx] - \
+                    self._current_afd_connector_metadata.afd_tokens_start_loc[idx - 1]
                 self._tensor_metadata_list[idx] = TensorMetadata(
                     tensor_metadata.device,
                     tensor_metadata.dtype,
