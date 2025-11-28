@@ -226,13 +226,12 @@ class P2PAFDConnector(AFDConnectorBase):
         stage_idx = self.recv_attn_output_counter % self._current_afd_connector_metadata.num_of_stages
         layer_idx = self.recv_attn_output_counter // self._current_afd_connector_metadata.num_of_stages
         a2e_tag = self._a2e_tag_base + self.recv_attn_output_counter
-        logger.info(f"jcz recv_attn_output a2e_tag:{a2e_tag} hidden_states shape:{hidden_states.shape} "
-                    f"layer_idx:{layer_idx} stage_idx:{stage_idx} num_of_stages:{self._current_afd_connector_metadata.num_of_stages}")
         hidden_states, work_list = self._recv_hidden_states(src,
                                                             stage_idx,
                                                             self.a2e_group,
                                                             a2e_tag)
-        logger.info(f"jcz recv_attn_output hidden_states received shape:{hidden_states.shape} stage_idx:{stage_idx} layer_idx:{layer_idx}")
+        logger.info(f"jcz recv_attn_output a2e_tag:{a2e_tag} hidden_states shape:{hidden_states.shape} "
+                    f"layer_idx:{layer_idx} stage_idx:{stage_idx} num_of_stages:{self._current_afd_connector_metadata.num_of_stages}")
         self._current_afd_connector_metadata.recv_handle_list = work_list
         self._current_afd_connector_metadata.layer_idx = self.recv_attn_output_counter // self._current_afd_connector_metadata.num_of_stages
         self.recv_attn_output_counter += 1
