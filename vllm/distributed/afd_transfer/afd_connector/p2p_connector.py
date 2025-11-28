@@ -77,6 +77,7 @@ class P2PAFDConnector(AFDConnectorBase):
         logger.info(f"jcz init_afd_connector ffn_ranks:{ffn_ranks} attn_ranks:{attn_ranks}")
         default_pg_switcher = DefaultProcessGroupSwitcher(
             _get_default_group(), afd_pg)
+        self.ae_group = []
         with default_pg_switcher:
             sub_group_ranks = []
             for i in range(len(ffn_ranks)):
@@ -88,16 +89,16 @@ class P2PAFDConnector(AFDConnectorBase):
             # The communication domain (rank range) is the same, but different group_name
             # creates independent groups
             logger.info(f"jcz begin init_afd_connector a2e_group")
-            self.a2e_group = init_model_parallel_group(sub_group_ranks,
+
+            a2e_group1 = init_model_parallel_group(sub_group_ranks,
                                                  self.local_rank,
                                                  backend="nccl",
-                                                 group_name="a2e")
-            logger.info(f"jcz init_afd_connector a2e_group:{self.a2e_group} rank_in_group:{self.a2e_group.rank_in_group}")
-            self.e2a_group = init_model_parallel_group(sub_group_ranks,
+                                                 group_name="ae1")
+            a2e_group2 = init_model_parallel_group(sub_group_ranks,
                                                  self.local_rank,
                                                  backend="nccl",
-                                                 group_name="e2a")
-            logger.info(f"jcz init_afd_connector e2a_group:{self.e2a_group} rank_in_group:{self.a2e_group.rank_in_group}")
+                                                 group_name="ae2")
+            self.ae_group = [a2e_group1, a2e_group2]
 
         logger.info("p2p connector initialized")
 
@@ -164,12 +165,12 @@ class P2PAFDConnector(AFDConnectorBase):
         
         assert src < process_group.world_size, f"Invalid src rank ({src})"
 
-        work_list = []
         hidden_states = torch.empty(self._tensor_metadata_list[stage_idx].size,
                                     dtype=self._tensor_metadata_list[stage_idx].dtype,
                                     device=self._tensor_metadata_list[stage_idx].device)
         logger.info(f"jcz _recv_hidden_states stage_idx:{stage_idx} size:{self._tensor_metadata_list[stage_idx].size} "
                     f"dtype:{self._tensor_metadata_list[stage_idx].dtype} device:{self._tensor_metadata_list[stage_idx].device}")
+        # work_list = []
         # work = torch.distributed.irecv(
         #     hidden_states, src=process_group.ranks[src], group=process_group.device_group
         # )
@@ -191,17 +192,18 @@ class P2PAFDConnector(AFDConnectorBase):
         """
 
         try:
-            dst = (self.a2e_group.rank_in_group + 1) % self.a2e_group.world_size
+            ae_group = self.ae_group[metadata.stage_idx]
+            dst = (ae_group.rank_in_group + 1) % ae_group.world_size
             if metadata.layer_idx == 0:
                 logger.info(f"jcz send_attn_output begin sending metadata")
-                self._send_metadata(metadata, hidden_states, dst, self.a2e_group)
+                self._send_metadata(metadata, hidden_states, dst, ae_group)
                 logger.info(f"jcz send_attn_output end sending metadata")
             self._current_afd_connector_metadata = metadata
-            torch.cuda.current_stream().synchronize()
+            # torch.cuda.current_stream().synchronize()
             a2e_tag = self._a2e_tag_base + metadata.num_of_stages * metadata.layer_idx + metadata.stage_idx
             logger.info(f"jcz send_attn_output a2e_tag:{a2e_tag} hidden_states shape:{hidden_states.shape} "
                         f"layer_idx:{metadata.layer_idx} stage_idx:{metadata.stage_idx} num_of_stages:{metadata.num_of_stages}")
-            self._send_hidden_states(hidden_states, dst, self.a2e_group, a2e_tag)
+            self._send_hidden_states(hidden_states, dst, ae_group, a2e_tag)
         except Exception as e:
             raise RuntimeError(f"Communication error: {e}")
 
@@ -215,9 +217,15 @@ class P2PAFDConnector(AFDConnectorBase):
         """
 
         # Use a2e_group for attention -> expert/ffn communication
-        src = (self.a2e_group.rank_in_group - 1) % self.a2e_group.world_size
+
+        stage_idx = self.recv_attn_output_counter % self._current_afd_connector_metadata.num_of_stages
+        layer_idx = self.recv_attn_output_counter // self._current_afd_connector_metadata.num_of_stages
+        logger.info(f"jcz recv_attn_output stage_idx:{stage_idx} layer_idx:{layer_idx}")
+        ae_group = self.ae_group[stage_idx]
+
+        src = (ae_group.rank_in_group - 1) % ae_group.world_size
         if self._need_recv_metadata:
-            self._recv_metadata(src, self.a2e_group)
+            self._recv_metadata(src, ae_group)
             logger.info(f"jcz self._current_afd_connector_metadata.stage_idx:{self._current_afd_connector_metadata.stage_idx} "
                         f"self._current_afd_connector_metadata.num_of_stages:{self._current_afd_connector_metadata.num_of_stages}")
             if self._current_afd_connector_metadata.stage_idx >= self._current_afd_connector_metadata.num_of_stages - 1:
@@ -229,13 +237,12 @@ class P2PAFDConnector(AFDConnectorBase):
         a2e_tag = self._a2e_tag_base + self.recv_attn_output_counter
         hidden_states, work_list = self._recv_hidden_states(src,
                                                             stage_idx,
-                                                            self.a2e_group,
+                                                            ae_group,
                                                             a2e_tag)
         logger.info(f"jcz recv_attn_output a2e_tag:{a2e_tag} hidden_states shape:{hidden_states.shape} "
                     f"layer_idx:{layer_idx} stage_idx:{stage_idx} num_of_stages:{self._current_afd_connector_metadata.num_of_stages}")
         self._current_afd_connector_metadata.recv_handle_list = work_list
         self._current_afd_connector_metadata.layer_idx = self.recv_attn_output_counter // self._current_afd_connector_metadata.num_of_stages
-        self.recv_attn_output_counter += 1
         return hidden_states, self._current_afd_connector_metadata
 
     # -------------------------------------------------------------------------
@@ -253,11 +260,16 @@ class P2PAFDConnector(AFDConnectorBase):
         """
         # Use async send instead of sync send
         # Use e2a_group for expert/ffn -> attention communication
-        torch.cuda.current_stream().synchronize()
-        dst = (self.e2a_group.rank_in_group + 1) % self.e2a_group.world_size
+        stage_idx = self.recv_attn_output_counter % self._current_afd_connector_metadata.num_of_stages
+        layer_idx = self.recv_attn_output_counter // self._current_afd_connector_metadata.num_of_stages
+        logger.info(f"jcz send_ffn_output stage_idx:{stage_idx} layer_idx:{layer_idx}")
+        ae_group = self.ae_group[stage_idx]
+        # torch.cuda.current_stream().synchronize()
+        dst = (ae_group.rank_in_group + 1) % ae_group.world_size
         
-        self._send_hidden_states(hidden_states, dst, self.e2a_group)
-
+        self._send_hidden_states(hidden_states, dst, ae_group)
+        
+        self.recv_attn_output_counter += 1
         if self.recv_attn_output_counter % \
             (self._current_afd_connector_metadata.num_of_stages * self.num_hidden_layers) == 0:
             self._need_recv_metadata = True
@@ -277,11 +289,12 @@ class P2PAFDConnector(AFDConnectorBase):
             (this should be the same GPU as it comes from)
         """
         # Use e2a_group for expert/ffn -> attention communication
-        src = (self.e2a_group.rank_in_group - 1) % self.e2a_group.world_size
+        ae_group = self.ae_group[self._current_afd_connector_metadata.stage_idx]
+        src = (ae_group.rank_in_group - 1) % ae_group.world_size
 
         hidden_states, work_list = self._recv_hidden_states(src,
                                                             self._current_afd_connector_metadata.stage_idx,
-                                                            self.e2a_group)
+                                                            ae_group)
         self._current_afd_connector_metadata.recv_handle_list = work_list
         logger.info(f"jcz recv_ffn_output src:{src} stage_idx:{self._current_afd_connector_metadata.stage_idx} "
                     f"hidden_states shape:{hidden_states.shape}")
