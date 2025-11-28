@@ -1321,6 +1321,11 @@ class DeepseekV2Model(nn.Module):
             # logger.info(f"jcz deepseekv2 layer_idx:{layer.layer_idx} start_loc:{afd_metadata.afd_tokens_start_loc} "
             #             f"start_idx:{start_idx} end_idx:{end_idx} "
             #             f"stage_idx:{afd_metadata.afd_stage_idx}")
+            if layer.layer_idx > 0:
+                hidden_states, recv_metadata = afd_connector.recv_ffn_output()
+                if recv_metadata.recv_handle_list is not None:
+                    recv_handle = recv_metadata.recv_handle_list
+
             if recv_handle is not None:
                 for work in recv_handle:
                     work.wait()
@@ -1336,11 +1341,17 @@ class DeepseekV2Model(nn.Module):
             afd_connector.send_attn_output(current_hidden, metadata)
             logger.info(f"jcz send_attn_output layer_idx:{layer.layer_idx} stage_idx:{afd_metadata.afd_stage_idx} "
                         f"current_hidden shape:{current_hidden.shape} current_hidden:{current_hidden[-1, :]}")
-            hidden_states, recv_metadata = afd_connector.recv_ffn_output()
-            if recv_metadata.recv_handle_list is not None:
-                recv_handle = recv_metadata.recv_handle_list
+
             if dbo_enabled():
                 dbo_yield()
+        
+        hidden_states, recv_metadata = afd_connector.recv_ffn_output()
+        if recv_metadata.recv_handle_list is not None:
+            recv_handle = recv_metadata.recv_handle_list
+        if recv_handle is not None:
+            for work in recv_handle:
+                work.wait()
+
         return hidden_states, residual
 
     def forward(
