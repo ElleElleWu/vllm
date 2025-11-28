@@ -277,6 +277,6 @@ class P2PAFDConnector(AFDConnectorBase):
                                                             self._current_afd_connector_metadata.stage_idx,
                                                             self.e2a_group)
         self._current_afd_connector_metadata.recv_handle_list = work_list
-        logger.info(f"jcz recv_ffn_output src:{src} stage_idx:{self._current_afd_connector_metadata.stage_idx}"
+        logger.info(f"jcz recv_ffn_output src:{src} stage_idx:{self._current_afd_connector_metadata.stage_idx} "
                     f"hidden_states shape:{hidden_states.shape}")
         return hidden_states, self._current_afd_connector_metadata
