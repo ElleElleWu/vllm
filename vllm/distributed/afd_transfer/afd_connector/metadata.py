@@ -90,7 +90,7 @@ class AFDConnectorMetadata:
             request_id: Optional[str] = None,
             ffn_need_forward_data:Optional[FFNNeedForwardData] = None,
             num_of_stages: int = 1,
-            tokens_of_microbatch: list[int] = []) -> "AFDConnectorMetadata":
+            afd_tokens_start_loc: list[int] = []) -> "AFDConnectorMetadata":
         """Create metadata for attention side (single sequence)."""
         return cls(layer_idx=layer_idx,
                    stage_idx=stage_idx,
@@ -101,7 +101,7 @@ class AFDConnectorMetadata:
                    ffn_need_forward_data=ffn_need_forward_data,
                    timestamp=time.time(),
                    num_of_stages=num_of_stages,
-                   afd_tokens_start_loc=tokens_of_microbatch)
+                   afd_tokens_start_loc=afd_tokens_start_loc)
 
     @classmethod
     def create_ffn_metadata(
