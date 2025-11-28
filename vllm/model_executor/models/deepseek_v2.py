@@ -1345,7 +1345,9 @@ class DeepseekV2Model(nn.Module):
                         f"current_hidden shape:{current_hidden.shape} current_hidden:{current_hidden[-1, :]}")
 
             if dbo_enabled():
+                logger.info(f"jcz dbo_yield begin layer_idx:{layer.layer_idx} stage_idx:{afd_metadata.afd_stage_idx}")
                 dbo_yield()
+                logger.info(f"jcz dbo_yield end layer_idx:{layer.layer_idx} stage_idx:{afd_metadata.afd_stage_idx}")
         
         hidden_states, recv_metadata = afd_connector.recv_ffn_output()
         if recv_metadata.recv_handle_list is not None:
