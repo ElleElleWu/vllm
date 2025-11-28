@@ -193,8 +193,9 @@ class P2PAFDConnector(AFDConnectorBase):
         try:
             dst = (self.a2e_group.rank_in_group + 1) % self.a2e_group.world_size
             if metadata.layer_idx == 0:
-                logger.info(f"jcz send_attn_output sending metadata")
+                logger.info(f"jcz send_attn_output begin sending metadata")
                 self._send_metadata(metadata, hidden_states, dst, self.a2e_group)
+                logger.info(f"jcz send_attn_output end sending metadata")
             self._current_afd_connector_metadata = metadata
             torch.cuda.current_stream().synchronize()
             a2e_tag = self._a2e_tag_base + metadata.num_of_stages * metadata.layer_idx + metadata.stage_idx
