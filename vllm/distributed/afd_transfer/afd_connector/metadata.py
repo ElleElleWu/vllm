@@ -89,7 +89,8 @@ class AFDConnectorMetadata:
             device: torch.device,
             request_id: Optional[str] = None,
             ffn_need_forward_data:Optional[FFNNeedForwardData] = None,
-            num_of_stages: int = 1) -> "AFDConnectorMetadata":
+            num_of_stages: int = 1,
+            tokens_of_microbatch: list[int] = []) -> "AFDConnectorMetadata":
         """Create metadata for attention side (single sequence)."""
         return cls(layer_idx=layer_idx,
                    stage_idx=stage_idx,
@@ -99,7 +100,8 @@ class AFDConnectorMetadata:
                    request_id=request_id,
                    ffn_need_forward_data=ffn_need_forward_data,
                    timestamp=time.time(),
-                   num_of_stages=num_of_stages)
+                   num_of_stages=num_of_stages,
+                   afd_tokens_start_loc=tokens_of_microbatch)
 
     @classmethod
     def create_ffn_metadata(
