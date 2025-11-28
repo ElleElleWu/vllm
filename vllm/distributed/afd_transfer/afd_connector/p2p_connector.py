@@ -43,6 +43,7 @@ class P2PAFDConnector(AFDConnectorBase):
         self._current_afd_connector_metadata: AFDConnectorMetadata | None = None
         self.num_hidden_layers = self.config.model_config.hf_config.num_hidden_layers
         self.recv_attn_output_counter: int = 0
+        self._comm_base_tag = 0
 
     def close(self) -> None:
         """Close the connector and release resources."""
@@ -53,6 +54,7 @@ class P2PAFDConnector(AFDConnectorBase):
         """Initialize the AFD connector."""
         afd_size = self.config.afd_config.afd_extra_config.get("afd_size")
         role = self.config.afd_config.afd_role
+        self._comm_base_tag = 0 if role == "attention" else 10000
         attn_size, ffn_size = map(
             int,
             re.match(r"(\d+)\D+(\d+)", afd_size).groups())
@@ -138,6 +140,7 @@ class P2PAFDConnector(AFDConnectorBase):
         hidden_states: torch.Tensor,
         dst: int,
         process_group: GroupCoordinator,
+        tag: int = 0
     ) -> None:
         if not torch.distributed.is_initialized() or process_group.world_size == 1:
             return []
@@ -153,6 +156,7 @@ class P2PAFDConnector(AFDConnectorBase):
         src: int,
         stage_idx: int,
         process_group: GroupCoordinator,
+        tag: int = 0
     ) -> tuple[torch.Tensor, list]:
         if not torch.distributed.is_initialized() or process_group.world_size == 1:
             return {}, []
@@ -183,13 +187,12 @@ class P2PAFDConnector(AFDConnectorBase):
         """
 
         try:
-            torch.cuda.current_stream().synchronize()
             dst = (self.a2e_group.rank_in_group + 1) % self.a2e_group.world_size
             if metadata.layer_idx == 0:
                 logger.info(f"jcz send_attn_output sending metadata")
                 self._send_metadata(metadata, hidden_states, dst, self.a2e_group)
             self._current_afd_connector_metadata = metadata
-            torch.cuda.current_stream().synchronize()
+            # torch.cuda.current_stream().synchronize()
             self._send_hidden_states(hidden_states, dst, self.a2e_group)
         except Exception as e:
             raise RuntimeError(f"Communication error: {e}")
@@ -239,7 +242,7 @@ class P2PAFDConnector(AFDConnectorBase):
         """
         # Use async send instead of sync send
         # Use e2a_group for expert/ffn -> attention communication
-        torch.cuda.current_stream().synchronize()
+        # torch.cuda.current_stream().synchronize()
         dst = (self.e2a_group.rank_in_group + 1) % self.e2a_group.world_size
         
         # logger.info(f"jcz send_ffn_output dst:{dst} shape:{hidden_states.shape}"
