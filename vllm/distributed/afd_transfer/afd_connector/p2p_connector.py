@@ -220,7 +220,9 @@ class P2PAFDConnector(AFDConnectorBase):
 
         group_idx = self.recv_attn_output_counter % self._current_afd_connector_metadata.num_of_stages \
               if self._current_afd_connector_metadata is not None else 0
-        logger.info(f"jcz recv_attn_output stage_idx:{group_idx} layer_idx:{layer_idx}")
+        lay_idx = self.recv_attn_output_counter // self._current_afd_connector_metadata.num_of_stages \
+              if self._current_afd_connector_metadata is not None else 0
+        logger.info(f"jcz recv_attn_output stage_idx:{group_idx} layer_idx:{lay_idx}")
         ae_group = self.ae_group[group_idx]
 
         src = (ae_group.rank_in_group - 1) % ae_group.world_size
