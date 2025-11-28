@@ -134,8 +134,11 @@ class P2PAFDConnector(AFDConnectorBase):
     ) -> None:
         (self._current_afd_connector_metadata, tensor_metadata) = process_group.recv_object(src=src)
         num_of_stages = self._current_afd_connector_metadata.num_of_stages
+        logger.info(f"jcz _recv_metadata num_of_stages:{num_of_stages} "
+                    f"afd_tokens_start_loc:{self._current_afd_connector_metadata.afd_tokens_start_loc}")
         assert num_of_stages == len(self._current_afd_connector_metadata.afd_tokens_start_loc), \
             f"num_of_stages:{num_of_stages} != len(afd_tokens_start_loc):{len(self._current_afd_connector_metadata.afd_tokens_start_loc)}"
+        
         for idx in range(num_of_stages):
             if idx == 0:
                 self._tensor_metadata_list[0] = tensor_metadata
