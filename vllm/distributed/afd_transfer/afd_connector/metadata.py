@@ -4,7 +4,7 @@
 FFN workers."""
 
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Optional
 import typing
 
@@ -50,7 +50,7 @@ class AFDConnectorMetadata:
     """ffn need forward data"""
     ffn_need_forward_data: Optional[FFNNeedForwardData] = None
     num_of_stages: int = 1
-    afd_tokens_start_loc: list[int] = []
+    afd_tokens_start_loc: list = field(default_factory=list)
 
     def __post_init__(self):
         """Validate data consistency."""
