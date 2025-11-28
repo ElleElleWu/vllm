@@ -144,7 +144,7 @@ class P2PAFDConnector(AFDConnectorBase):
                 logger.info("jcz _recv_metadata idx:0")
                 self._tensor_metadata_list[0] = tensor_metadata
             else:
-                logger.info("jcz _recv_metadata idx:{}", idx)
+                logger.info(f"jcz _recv_metadata idx:{idx}")
                 new_size = list(tensor_metadata.size)
                 new_size[0] = self._current_afd_connector_metadata.afd_tokens_start_loc[idx] - \
                     self._current_afd_connector_metadata.afd_tokens_start_loc[idx - 1]
