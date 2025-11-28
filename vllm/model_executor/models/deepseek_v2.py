@@ -1305,55 +1305,6 @@ class DeepseekV2Model(nn.Module):
     def get_input_embeddings(self, input_ids: torch.Tensor) -> torch.Tensor:
         return self.embed_tokens(input_ids)
     
-    # def forward_with_afd(
-    #     self,
-    #     hidden_states: torch.Tensor,
-    #     residual: torch.Tensor,
-    #     positions: torch.Tensor,
-    #     afd_metadata: AFDMetadata
-    # ) -> tuple[torch.Tensor, torch.Tensor]:
-    #     recv_handle = None
-    #     for layer in islice(self.layers, self.start_layer, self.end_layer):
-    #         afd_connector = afd_metadata.afd_connector
-    #         afd_metadata.afd_stage_idx = dbo_current_ubatch_id()
-    #         start_idx = afd_metadata.afd_tokens_start_loc[afd_metadata.afd_stage_idx]
-    #         end_idx = start_idx + afd_metadata.afd_tokens_lens[afd_metadata.afd_stage_idx]
-    #         # logger.info(f"jcz deepseekv2 layer_idx:{layer.layer_idx} start_loc:{afd_metadata.afd_tokens_start_loc} "
-    #         #             f"start_idx:{start_idx} end_idx:{end_idx} "
-    #         #             f"stage_idx:{afd_metadata.afd_stage_idx}")
-    #         if layer.layer_idx > 0:
-    #             hidden_states, recv_metadata = afd_connector.recv_ffn_output()
-    #             if recv_metadata.recv_handle_list is not None:
-    #                 recv_handle = recv_metadata.recv_handle_list
-
-    #         if recv_handle is not None:
-    #             for work in recv_handle:
-    #                 work.wait()
-    #         current_hidden, residual = layer(positions, hidden_states, residual)
-    #         metadata = AFDConnectorMetadata.create_attention_metadata(
-    #             layer_idx=layer.layer_idx,
-    #             stage_idx=afd_metadata.afd_stage_idx,
-    #             seq_len=current_hidden.shape[0],
-    #             dtype=current_hidden.dtype,
-    #             device=current_hidden.device,
-    #             num_of_stages=afd_metadata.num_of_stages,
-    #         )
-    #         afd_connector.send_attn_output(current_hidden, metadata)
-    #         logger.info(f"jcz send_attn_output layer_idx:{layer.layer_idx} stage_idx:{afd_metadata.afd_stage_idx} "
-    #                     f"current_hidden shape:{current_hidden.shape} current_hidden:{current_hidden[-1, :]}")
-
-    #         if dbo_enabled():
-    #             dbo_yield()
-        
-    #     hidden_states, recv_metadata = afd_connector.recv_ffn_output()
-    #     if recv_metadata.recv_handle_list is not None:
-    #         recv_handle = recv_metadata.recv_handle_list
-    #     if recv_handle is not None:
-    #         for work in recv_handle:
-    #             work.wait()
-
-    #     return hidden_states, residual
-    
     def forward_with_afd(
         self,
         hidden_states: torch.Tensor,
@@ -1367,10 +1318,14 @@ class DeepseekV2Model(nn.Module):
             afd_metadata.afd_stage_idx = dbo_current_ubatch_id()
             start_idx = afd_metadata.afd_tokens_start_loc[afd_metadata.afd_stage_idx]
             end_idx = start_idx + afd_metadata.afd_tokens_lens[afd_metadata.afd_stage_idx]
-            logger.info(f"jcz deepseekv2 layer_idx:{layer.layer_idx} start_loc:{afd_metadata.afd_tokens_start_loc} "
-                        f"start_idx:{start_idx} end_idx:{end_idx} "
-                        f"stage_idx:{afd_metadata.afd_stage_idx} "
-                        f"num_of_stages:{afd_metadata.num_of_stages}")
+            # logger.info(f"jcz deepseekv2 layer_idx:{layer.layer_idx} start_loc:{afd_metadata.afd_tokens_start_loc} "
+            #             f"start_idx:{start_idx} end_idx:{end_idx} "
+            #             f"stage_idx:{afd_metadata.afd_stage_idx}")
+            if layer.layer_idx > 0:
+                hidden_states, recv_metadata = afd_connector.recv_ffn_output()
+                if recv_metadata.recv_handle_list is not None:
+                    recv_handle = recv_metadata.recv_handle_list
+
             if recv_handle is not None:
                 for work in recv_handle:
                     work.wait()
@@ -1384,13 +1339,58 @@ class DeepseekV2Model(nn.Module):
                 num_of_stages=afd_metadata.num_of_stages,
             )
             afd_connector.send_attn_output(current_hidden, metadata)
-            hidden_states, recv_metadata = afd_connector.recv_ffn_output()
-            if recv_metadata.recv_handle_list is not None:
-                recv_handle = recv_metadata.recv_handle_list
+            logger.info(f"jcz send_attn_output layer_idx:{layer.layer_idx} stage_idx:{afd_metadata.afd_stage_idx} "
+                        f"current_hidden shape:{current_hidden.shape} current_hidden:{current_hidden[-1, :]}")
+
             if dbo_enabled():
                 dbo_yield()
         
+        hidden_states, recv_metadata = afd_connector.recv_ffn_output()
+        if recv_metadata.recv_handle_list is not None:
+            recv_handle = recv_metadata.recv_handle_list
+        if recv_handle is not None:
+            for work in recv_handle:
+                work.wait()
+
         return hidden_states, residual
+    
+    # def forward_with_afd(
+    #     self,
+    #     hidden_states: torch.Tensor,
+    #     residual: torch.Tensor,
+    #     positions: torch.Tensor,
+    #     afd_metadata: AFDMetadata
+    # ) -> tuple[torch.Tensor, torch.Tensor]:
+    #     recv_handle = None
+    #     for layer in islice(self.layers, self.start_layer, self.end_layer):
+    #         afd_connector = afd_metadata.afd_connector
+    #         afd_metadata.afd_stage_idx = dbo_current_ubatch_id()
+    #         start_idx = afd_metadata.afd_tokens_start_loc[afd_metadata.afd_stage_idx]
+    #         end_idx = start_idx + afd_metadata.afd_tokens_lens[afd_metadata.afd_stage_idx]
+    #         logger.info(f"jcz deepseekv2 layer_idx:{layer.layer_idx} start_loc:{afd_metadata.afd_tokens_start_loc} "
+    #                     f"start_idx:{start_idx} end_idx:{end_idx} "
+    #                     f"stage_idx:{afd_metadata.afd_stage_idx} "
+    #                     f"num_of_stages:{afd_metadata.num_of_stages}")
+    #         if recv_handle is not None:
+    #             for work in recv_handle:
+    #                 work.wait()
+    #         current_hidden, residual = layer(positions, hidden_states, residual)
+    #         metadata = AFDConnectorMetadata.create_attention_metadata(
+    #             layer_idx=layer.layer_idx,
+    #             stage_idx=afd_metadata.afd_stage_idx,
+    #             seq_len=current_hidden.shape[0],
+    #             dtype=current_hidden.dtype,
+    #             device=current_hidden.device,
+    #             num_of_stages=afd_metadata.num_of_stages,
+    #         )
+    #         afd_connector.send_attn_output(current_hidden, metadata)
+    #         hidden_states, recv_metadata = afd_connector.recv_ffn_output()
+    #         if recv_metadata.recv_handle_list is not None:
+    #             recv_handle = recv_metadata.recv_handle_list
+    #         if dbo_enabled():
+    #             dbo_yield()
+        
+    #     return hidden_states, residual
 
     def forward(
         self,
