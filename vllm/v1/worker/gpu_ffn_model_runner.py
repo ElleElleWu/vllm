@@ -128,7 +128,7 @@ class GPUFFNModelRunner(LoRAModelRunnerMixin):
             hidden_states, recv_metadata = self.connector.recv_attn_output()
             current_layer_idx = recv_metadata.layer_idx
             logger.info(f"layer {current_layer_idx} moe recv hidden states type:{type(hidden_states)}, "
-                        f"shape:{hidden_states.shape}")
+                        f"shape:{hidden_states.shape} stage_idx:{recv_metadata.stage_idx}")
             num_tokens = hidden_states.shape[0]
             if recv_metadata is not None and recv_metadata.recv_handle_list is not None:
                 for work in recv_metadata.recv_handle_list:
@@ -152,7 +152,9 @@ class GPUFFNModelRunner(LoRAModelRunnerMixin):
                         hidden_states, current_layer_idx)
 
             recv_metadata.recv_handle_list = None
+            logger.info(f"jcz begin send_ffn_output layer_idx:{current_layer_idx} stage_idx:{recv_metadata.stage_idx}")
             self.connector.send_ffn_output(rank_ffn_output, recv_metadata)
+            logger.info(f"jcz end send_ffn_output layer_idx:{current_layer_idx} stage_idx:{recv_metadata.stage_idx}")
         except Exception as e:
             raise ValueError(
                 f"Error computing FFN: {e}"

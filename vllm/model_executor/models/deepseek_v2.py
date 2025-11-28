@@ -1322,7 +1322,9 @@ class DeepseekV2Model(nn.Module):
                         f"start_idx:{start_idx} end_idx:{end_idx} "
                         f"stage_idx:{afd_metadata.afd_stage_idx}")
             if layer.layer_idx > 0:
+                logger.info(f"jcz begin recv_ffn_output layer_idx:{layer.layer_idx} stage_idx:{afd_metadata.afd_stage_idx}")
                 hidden_states, recv_metadata = afd_connector.recv_ffn_output()
+                logger.info(f"jcz end recv_ffn_output layer_idx:{layer.layer_idx} stage_idx:{afd_metadata.afd_stage_idx}")
                 if recv_metadata.recv_handle_list is not None:
                     recv_handle = recv_metadata.recv_handle_list
 
