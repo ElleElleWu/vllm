@@ -123,7 +123,6 @@ class P2PAFDConnector(AFDConnectorBase):
         tensor_metadata = TensorMetadata(hidden_states.device.type, hidden_states.dtype, hidden_states.size())
         metadata_tuple = (metadata, tensor_metadata)
         process_group.send_object(metadata_tuple, dst=dst)
-        self._current_afd_connector_metadata = metadata
         self._tensor_metadata_list[metadata.stage_idx] = tensor_metadata
     
     def _recv_metadata(
@@ -192,6 +191,7 @@ class P2PAFDConnector(AFDConnectorBase):
                 logger.info(f"jcz send_attn_output sending metadata")
                 self._send_metadata(metadata, hidden_states, dst, self.a2e_group)
             logger.info(f"jcz send_attn_output sending hidden_states shape:{hidden_states.shape}")
+            self._current_afd_connector_metadata = metadata
             torch.cuda.current_stream().synchronize()
             self._send_hidden_states(hidden_states, dst, self.a2e_group)
         except Exception as e:
