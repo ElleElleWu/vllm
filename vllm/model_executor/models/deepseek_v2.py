@@ -1320,7 +1320,10 @@ class DeepseekV2Model(nn.Module):
             end_idx = start_idx + afd_metadata.afd_tokens_lens[afd_metadata.afd_stage_idx]
             logger.info(f"jcz deepseekv2 layer_idx:{layer.layer_idx} start_loc:{afd_metadata.afd_tokens_start_loc} "
                         f"start_idx:{start_idx} end_idx:{end_idx} "
-                        f"stage_idx:{afd_metadata.afd_stage_idx}")
+                        f"stage_idx:{afd_metadata.afd_stage_idx} "
+                        f"hidden_states:{hidden_states.shape} "
+                        f"positions:{positions.shape} "
+                        f"afd_tokens_start_loc:{afd_metadata.afd_tokens_start_loc}")
             if layer.layer_idx > 0:
                 logger.info(f"jcz begin recv_ffn_output layer_idx:{layer.layer_idx} stage_idx:{afd_metadata.afd_stage_idx}")
                 hidden_states, recv_metadata = afd_connector.recv_ffn_output()
@@ -1339,7 +1342,7 @@ class DeepseekV2Model(nn.Module):
                 dtype=current_hidden.dtype,
                 device=current_hidden.device,
                 num_of_stages=afd_metadata.num_of_stages,
-                tokens_of_microbatch=afd_metadata.afd_tokens_start_loc,
+                afd_tokens_start_loc=afd_metadata.afd_tokens_start_loc,
             )
             logger.info(f"jcz send_attn_output begin layer_idx:{layer.layer_idx} stage_idx:{afd_metadata.afd_stage_idx} "
                         f"current_hidden shape:{current_hidden.shape} current_hidden:{current_hidden[-1, :]}")
