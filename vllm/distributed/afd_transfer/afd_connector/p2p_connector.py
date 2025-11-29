@@ -111,6 +111,20 @@ class P2PAFDConnector(AFDConnectorBase):
         """
         return self._initialized
 
+    def _build_tensor_metadata_list(self,
+                                    tensor_metadata: TensorMetadata,
+                                    connector_metadata: AFDConnectorMetadata) -> None:
+        tensor_metadata_list = {}
+        num_of_stages = connector_metadata.num_of_stages
+        for idx in range(num_of_stages):
+            if idx == 0:
+                tensor_metadata_list[0] = tensor_metadata
+            else:
+                new_size = list(tensor_metadata.size)
+                new_size[0] = connector_metadata.afd_tokens_start_loc[idx] - connector_metadata.afd_tokens_start_loc[idx - 1]
+                tensor_metadata_list[idx] = TensorMetadata(tensor_metadata.device, tensor_metadata.dtype, torch.Size(new_size))
+        return tensor_metadata_list
+
     def _send_metadata(
         self,
         metadata: AFDConnectorMetadata,
@@ -125,7 +139,8 @@ class P2PAFDConnector(AFDConnectorBase):
         tensor_metadata = TensorMetadata(hidden_states.device.type, hidden_states.dtype, hidden_states.size())
         metadata_tuple = (metadata, tensor_metadata)
         process_group.send_object(metadata_tuple, dst=dst)
-        self._tensor_metadata_list[metadata.stage_idx] = tensor_metadata
+        self._tensor_metadata_list = self._build_tensor_metadata_list(tensor_metadata, metadata)
+        logger.info(f"jcz _recv_metadata tensor_metadata_list:{self._tensor_metadata_list}")
     
     def _recv_metadata(
         self,
@@ -139,21 +154,7 @@ class P2PAFDConnector(AFDConnectorBase):
         assert num_of_stages == len(self._current_afd_connector_metadata.afd_tokens_start_loc), \
             f"num_of_stages:{num_of_stages} != len(afd_tokens_start_loc):{len(self._current_afd_connector_metadata.afd_tokens_start_loc)}"
         
-        for idx in range(num_of_stages):
-            if idx == 0:
-                logger.info("jcz _recv_metadata idx:0")
-                self._tensor_metadata_list[0] = tensor_metadata
-            else:
-                logger.info(f"jcz _recv_metadata 1 idx:{idx}")
-                new_size = list(tensor_metadata.size)
-                new_size[0] = self._current_afd_connector_metadata.afd_tokens_start_loc[idx] - \
-                    self._current_afd_connector_metadata.afd_tokens_start_loc[idx - 1]
-                logger.info(f"jcz _recv_metadata 2 new_size:{new_size}")
-                self._tensor_metadata_list[idx] = TensorMetadata(
-                    tensor_metadata.device,
-                    tensor_metadata.dtype,
-                    torch.Size(new_size))
-                logger.info(f"jcz _recv_metadata 3")
+        self._tensor_metadata_list = self._build_tensor_metadata_list(tensor_metadata, self._current_afd_connector_metadata)
         logger.info(f"jcz _recv_metadata tensor_metadata_list:{self._tensor_metadata_list}")
 
     def _send_hidden_states(
@@ -178,6 +179,7 @@ class P2PAFDConnector(AFDConnectorBase):
         src: int,
         stage_idx: int,
         process_group: GroupCoordinator,
+        tensor_metadata: TensorMetadata,
         tag: int = 0
     ) -> tuple[torch.Tensor, list]:
         if not torch.distributed.is_initialized() or process_group.world_size == 1:
@@ -185,12 +187,13 @@ class P2PAFDConnector(AFDConnectorBase):
         
         assert src < process_group.world_size, f"Invalid src rank ({src})"
 
-        work_list = []
-        hidden_states = torch.empty(self._tensor_metadata_list[stage_idx].size,
-                                    dtype=self._tensor_metadata_list[stage_idx].dtype,
-                                    device=self._tensor_metadata_list[stage_idx].device)
-        logger.info(f"jcz _recv_hidden_states stage_idx:{stage_idx} size:{self._tensor_metadata_list[stage_idx].size} "
-                    f"dtype:{self._tensor_metadata_list[stage_idx].dtype} device:{self._tensor_metadata_list[stage_idx].device}")
+        hidden_states = torch.empty(tensor_metadata.size,
+                                    dtype=tensor_metadata.dtype,
+                                    device=tensor_metadata.device)
+        logger.info(f"jcz _recv_hidden_states stage_idx:{stage_idx} size:{tensor_metadata.size} "
+                    f"dtype:{tensor_metadata.dtype} device:{tensor_metadata.device}")
+        
+        # work_list = []
         # work = torch.distributed.irecv(
         #     hidden_states, src=process_group.ranks[src], group=process_group.device_group
         # )
@@ -254,6 +257,7 @@ class P2PAFDConnector(AFDConnectorBase):
         hidden_states, work_list = self._recv_hidden_states(src,
                                                             stage_idx,
                                                             self.a2e_group,
+                                                            self._tensor_metadata_list[stage_idx],
                                                             a2e_tag)
         logger.info(f"jcz recv_attn_output a2e_tag:{a2e_tag} hidden_states shape:{hidden_states.shape} "
                     f"layer_idx:{layer_idx} stage_idx:{stage_idx} num_of_stages:{self._current_afd_connector_metadata.num_of_stages}")
@@ -305,7 +309,8 @@ class P2PAFDConnector(AFDConnectorBase):
 
         hidden_states, work_list = self._recv_hidden_states(src,
                                                             self._current_afd_connector_metadata.stage_idx,
-                                                            self.e2a_group)
+                                                            self.e2a_group,
+                                                            self._tensor_metadata_list[self._current_afd_connector_metadata.stage_idx])
         self._current_afd_connector_metadata.recv_handle_list = work_list
         logger.info(f"jcz recv_ffn_output src:{src} stage_idx:{self._current_afd_connector_metadata.stage_idx} "
                     f"hidden_states shape:{hidden_states.shape}")
