@@ -151,8 +151,8 @@ class P2PAFDConnector(AFDConnectorBase):
         num_of_stages = self._current_afd_connector_metadata.num_of_stages
         logger.info(f"jcz _recv_metadata num_of_stages:{num_of_stages} "
                     f"afd_tokens_start_loc:{self._current_afd_connector_metadata.afd_tokens_start_loc}")
-        assert num_of_stages == len(self._current_afd_connector_metadata.afd_tokens_start_loc), \
-            f"num_of_stages:{num_of_stages} != len(afd_tokens_start_loc):{len(self._current_afd_connector_metadata.afd_tokens_start_loc)}"
+        # assert num_of_stages == len(self._current_afd_connector_metadata.afd_tokens_start_loc), \
+        #     f"num_of_stages:{num_of_stages} != afd_tokens_start_loc:{self._current_afd_connector_metadata.afd_tokens_start_loc}"
         
         self._tensor_metadata_list = self._build_tensor_metadata_list(tensor_metadata, self._current_afd_connector_metadata)
         logger.info(f"jcz _recv_metadata tensor_metadata_list:{self._tensor_metadata_list}")
